@@ -1,22 +1,88 @@
-from services.ai.config import AI_MODEL
+from services.ai.config import AI_PROVIDER
 
 
-def select_model(
-    task: str = "chat"
-):
-
-    models = {
-
-        "chat": AI_MODEL,
-
-        "memory": AI_MODEL,
-
-        "code": AI_MODEL
-
-    }
+class AIRouter:
 
 
-    return models.get(
-        task,
-        AI_MODEL
-    )
+    COMPLEX_KEYWORDS = [
+
+        # English
+        "code",
+        "python",
+        "javascript",
+        "java",
+        "debug",
+        "error",
+        "exception",
+        "architecture",
+        "database",
+        "api",
+        "server",
+        "docker",
+        "linux",
+        "deploy",
+        "refactor",
+        "algorithm",
+        "security",
+
+
+        # Persian
+        "کد",
+        "برنامه نویسی",
+        "برنامه‌نویسی",
+        "خطا",
+        "ارور",
+        "دیباگ",
+        "معماری",
+        "دیتابیس",
+        "پایگاه داده",
+        "ای پی آی",
+        "سرور",
+        "داکر",
+        "لینوکس",
+        "دیپلوی",
+        "ریفکتور",
+        "الگوریتم",
+        "امنیت",
+    ]
+
+
+    SIMPLE_KEYWORDS = [
+
+        "سلام",
+        "خوبی",
+        "مرسی",
+        "ممنون",
+        "خداحافظ",
+        "hello",
+        "hi",
+        "thanks",
+
+    ]
+
+
+    def select_provider(
+        self,
+        message: str
+    ):
+
+
+        text = message.lower()
+
+
+        for keyword in self.COMPLEX_KEYWORDS:
+
+            if keyword in text:
+
+                return "tabitoken"
+
+
+        for keyword in self.SIMPLE_KEYWORDS:
+
+            if keyword in text:
+
+                return "groq"
+
+
+        # پیش فرض
+        return "groq"

@@ -3,7 +3,9 @@ import logging
 from services.tasks.service import TaskService
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(
+    __name__
+)
 
 
 class TaskPipeline:
@@ -12,7 +14,7 @@ class TaskPipeline:
     def execute(
         user_id: int,
         message: str,
-        intent
+        intent,
     ):
 
         try:
@@ -22,34 +24,74 @@ class TaskPipeline:
                 message=message,
             )
 
+            due_date = (
+                result.get(
+                    "due_date"
+                )
+                or ""
+            ).strip()
+
+            response_lines = [
+                "✅ یادآوری ثبت شد",
+                "",
+                (
+                    f"📝 "
+                    f"{result.get('title', '')}"
+                ),
+            ]
+
+            if due_date:
+
+                response_lines.append(
+                    f"🕐 {due_date}"
+                )
+
+            else:
+
+                response_lines.append(
+                    "🕐 بدون زمان"
+                )
+
             return {
-                "response": (
-                    "✅ یادآوری ثبت شد\n\n"
-                    f"📝 {result.get('title', '')}\n"
-                    f"🆔 {result.get('id', '')}"
+                "response": "\n".join(
+                    response_lines
                 ),
                 "cached": False,
                 "intent": (
                     intent.to_dict()
-                    if intent and hasattr(intent, "to_dict")
+                    if (
+                        intent
+                        and hasattr(
+                            intent,
+                            "to_dict",
+                        )
+                    )
                     else {}
                 ),
                 "provider": "task",
             }
 
-        except ValueError as e:
+        except ValueError as exc:
 
             logger.warning(
                 "Task validation error: %s",
-                e,
+                exc,
             )
 
             return {
-                "response": f"⚠️ {str(e)}",
+                "response": (
+                    f"⚠️ {str(exc)}"
+                ),
                 "cached": False,
                 "intent": (
                     intent.to_dict()
-                    if intent and hasattr(intent, "to_dict")
+                    if (
+                        intent
+                        and hasattr(
+                            intent,
+                            "to_dict",
+                        )
+                    )
                     else {}
                 ),
                 "provider": "task",
@@ -62,11 +104,19 @@ class TaskPipeline:
             )
 
             return {
-                "response": "❌ خطا در ثبت یادآوری",
+                "response": (
+                    "❌ خطا در ثبت یادآوری"
+                ),
                 "cached": False,
                 "intent": (
                     intent.to_dict()
-                    if intent and hasattr(intent, "to_dict")
+                    if (
+                        intent
+                        and hasattr(
+                            intent,
+                            "to_dict",
+                        )
+                    )
                     else {}
                 ),
                 "provider": "task",

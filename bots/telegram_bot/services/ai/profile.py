@@ -5,7 +5,11 @@ Profile Engine
 برای Prompt است.
 """
 
+import logging
+
 from database.db import get_profile
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_PROFILE = {
@@ -33,8 +37,8 @@ def load_profile(user_id: int):
             "interests": data[4] or ""
         }
 
-    except Exception as e:
-        print(f"Profile Error: {e}")
+    except Exception:
+        logger.warning("Profile load failed for user %s", user_id)
         return DEFAULT_PROFILE.copy()
 
 

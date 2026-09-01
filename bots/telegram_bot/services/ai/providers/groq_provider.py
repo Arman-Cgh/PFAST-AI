@@ -67,11 +67,8 @@ class GroqProvider(AIProvider):
 
 
         except Exception as e:
-
-
             logger.error(
-                f"Groq error: {e}"
+                "Groq provider error: %s",
+                type(e).__name__,
             )
-
-
             raise

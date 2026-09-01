@@ -7,6 +7,75 @@ import json
 MAX_HISTORY_MESSAGES = 10
 
 
+BLOCKED_HISTORY_PHRASES = (
+    "من PF-AI هستم",
+    "من یک دستیار هوشمند هستم",
+    "من یک هوش مصنوعی هستم",
+    "این را به خاطر دارم",
+    "این را به خاطر سپردم",
+    "من به یاد دارم",
+    "AetherAI",
+)
+
+
+CODE_MODE_RULES = """
+قوانین حالت کدنویسی:
+
+- مثل یک برنامه‌نویس حرفه‌ای پاسخ بده.
+- اگر کد خواسته شد، کد کامل و قابل اجرا بده.
+- برای کد از Markdown استفاده کن.
+- اگر خطا وجود دارد ابتدا علت را مشخص کن.
+- اطلاعات فنی را حدس نزن.
+- اگر اطلاعات کافی نیست فقط سوال ضروری بپرس.
+"""
+
+
+def clean_history(history):
+
+    result = []
+
+    for item in history or []:
+
+        if not isinstance(item, dict):
+            continue
+
+
+        content = item.get(
+            "content",
+            ""
+        )
+
+
+        if not content:
+            continue
+
+
+        content = str(content)
+
+
+        if any(
+            phrase in content
+            for phrase in BLOCKED_HISTORY_PHRASES
+        ):
+            continue
+
+
+        result.append(
+            {
+                "role": str(
+                    item.get(
+                        "role",
+                        "user"
+                    )
+                ),
+                "content": content,
+            }
+        )
+
+
+    return result
+
+
 
 def build_prompt(
     user_id=None,
@@ -17,30 +86,39 @@ def build_prompt(
     state=None,
     current_time="",
     context=None,
-    datetime=None
+    datetime=None,
+    intent="chat",
 ):
 
 
-    # ==========================
-    # Context compatibility
-    # ==========================
+    project = ""
+
 
     if context:
+
+        project = context.get(
+            "project",
+            ""
+        )
+
 
         profile = context.get(
             "profile",
             profile
         )
 
+
         history = context.get(
             "history",
             history
         )
 
+
         memory = context.get(
             "memory",
             memory
         )
+
 
         state = context.get(
             "state",
@@ -48,15 +126,23 @@ def build_prompt(
         )
 
 
-    if datetime:
+        current_time = context.get(
+            "datetime",
+            current_time
+        )
 
+
+
+    if datetime:
         current_time = datetime
 
 
 
-    # ==========================
-    # Personality
-    # ==========================
+    intent = str(
+        intent or "chat"
+    ).lower().strip()
+
+
 
     personality = Personality(
         profile=profile,
@@ -66,177 +152,134 @@ def build_prompt(
 
 
 
-    # ==========================
-    # Memory
-    # ==========================
-
     if isinstance(memory, dict):
 
         memory_text = "\n".join(
-
             [
-
-                f"- {key}: {value}"
-
-                for key, value in memory.items()
-
-                if value
-
+                f"- {k}: {v}"
+                for k, v in memory.items()
+                if v
             ]
-
         )
-
 
     else:
 
         memory_text = (
-
-            memory
-
+            str(memory)
             if memory
-
             else
-
             "حافظه‌ای ثبت نشده است."
-
         )
 
 
-
-    # ==========================
-    # Profile
-    # ==========================
 
     profile_text = json.dumps(
-
         profile or {},
-
-        ensure_ascii=False,
-
-        separators=(
-            ",",
-            ":"
-        )
-
+        ensure_ascii=False
     )
 
-
-
-    # ==========================
-    # State
-    # ==========================
 
     state_text = json.dumps(
-
         state or {},
-
-        ensure_ascii=False,
-
-        separators=(
-            ",",
-            ":"
-        )
-
+        ensure_ascii=False
     )
 
 
 
-    # ==========================
-    # History
-    # ==========================
+    history = clean_history(
+        history
+    )
 
-    history = (
 
-        history or []
+    if intent == "code":
 
-    )[-MAX_HISTORY_MESSAGES:]
+        history = history[-3:]
+
+    elif intent == "task":
+
+        history = history[-2:]
+
+    elif intent == "memory":
+
+        history = []
+
+    else:
+
+        history = history[-MAX_HISTORY_MESSAGES:]
 
 
 
     history_text = "\n".join(
-
         [
-
-            f"{item['role']}: {item['content']}"
-
-            for item in history
-
-            if item.get("content")
-
+            f"{x['role']}: {x['content']}"
+            for x in history
         ]
-
     )
 
 
     if not history_text:
-
-        history_text = (
-            "تاریخچه‌ای وجود ندارد."
-        )
+        history_text = "تاریخچه‌ای وجود ندارد."
 
 
 
-    # ==========================
-    # System Prompt
-    # ==========================
+    mode_rules = (
+        CODE_MODE_RULES
+        if intent == "code"
+        else ""
+    )
+
+
 
     system_message = f"""
 
 {SYSTEM_PROMPT}
 
 
-نام دستیار:
-PF-AI
+حالت:
+{intent}
 
 
-شخصیت دستیار:
-{personality}
-
-
-زمان فعلی:
-{current_time}
+{mode_rules}
 
 
 اطلاعات کاربر:
 {profile_text}
 
 
-وضعیت کاربر:
+شخصیت:
+{personality}
+
+
+وضعیت:
 {state_text}
 
 
-حافظه بلند مدت:
+حافظه:
 {memory_text}
 
 
-گفتگوهای اخیر:
+اطلاعات پروژه:
+{project}
+اگر اطلاعات پروژه در بخش بالا وجود دارد، آن را به عنوان مرجع معتبر استفاده کن و درباره نداشتن دسترسی به پروژه صحبت نکن.
+
+
+زمان:
+{current_time}
+
+
+تاریخچه:
 {history_text}
-
-
-
-قوانین پاسخ:
-
-- همیشه از اطلاعات موجود استفاده کن.
-- اطلاعات ذخیره شده را دوباره از کاربر نپرس.
-- چیزی که نمی‌دانی را حدس نزن.
-- پاسخ طبیعی و فارسی باشد.
-- خودت را PF-AI معرفی کن.
-- اگر اطلاعاتی برای حافظه مناسب بود، فقط از سیستم حافظه استفاده کن.
-
 
 """
 
 
     return [
-
         {
             "role": "system",
             "content": system_message.strip()
         },
-
         {
             "role": "user",
             "content": user_message
         }
-
     ]

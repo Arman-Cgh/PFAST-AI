@@ -26,6 +26,7 @@ class ConversationHandler:
             or AIEngine()
         )
 
+
     async def handle(
         self,
         user_id: int,
@@ -37,6 +38,7 @@ class ConversationHandler:
             message=message,
         )
 
+
         if not result["allowed"]:
 
             return result.get(
@@ -44,13 +46,11 @@ class ConversationHandler:
                 "درخواست رد شد.",
             )
 
+
         clean_message = result["message"]
         route = result["route"]
         intent = result["intent"]
 
-        # ==========================================
-        # Non-AI Routes
-        # ==========================================
 
         if not route.get(
             "requires_ai",
@@ -64,9 +64,6 @@ class ConversationHandler:
                 intent=intent,
             )
 
-        # ==========================================
-        # AI Pipeline
-        # ==========================================
 
         try:
 
@@ -76,28 +73,27 @@ class ConversationHandler:
                 intent=intent,
             )
 
+
+            response = ai_result.get(
+                "response",
+                "",
+            )
+
+
         except Exception:
 
             logger.exception(
-                "AI pipeline failed",
+                "AI pipeline failed"
             )
 
             raise
 
-        response = ai_result.get(
-            "response",
-            "",
+
+
+        response = self.conversation.middleware.after_process(
+            response
         )
 
-        response = (
-            self.conversation.middleware.after_process(
-                response,
-            )
-        )
-
-        # ==========================================
-        # Save Assistant Response
-        # ==========================================
 
         if route.get(
             "save_history",
@@ -109,74 +105,49 @@ class ConversationHandler:
                 response=response,
             )
 
+
         return response
 
-    # ==========================================
-    # Non-AI Routes
-    # ==========================================
+
 
     async def _handle_non_ai_route(
         self,
-        user_id: int,
-        message: str,
-        route: dict,
+        user_id,
+        message,
+        route,
         intent,
     ):
+
 
         action = route.get(
             "action",
             "chat",
         )
 
-        # ==========================================
-        # Task
-        # ==========================================
 
         if action == "task":
 
-            try:
+            result = TaskPipeline.execute(
+                user_id=user_id,
+                message=message,
+                intent=intent,
+            )
 
-                result = TaskPipeline.execute(
-                    user_id=user_id,
-                    message=message,
-                    intent=intent,
-                )
 
-                response = result.get(
-                    "response",
-                    "",
-                )
+            response = result.get(
+                "response",
+                "",
+            )
 
-                response = (
-                    self.conversation.middleware.after_process(
-                        response,
-                    )
-                )
 
-                if route.get(
-                    "save_history",
-                    True,
-                ):
+            self.conversation.save_response(
+                user_id=user_id,
+                response=response,
+            )
 
-                    self.conversation.save_response(
-                        user_id=user_id,
-                        response=response,
-                    )
 
-                return response
+            return response
 
-            except Exception:
 
-                logger.exception(
-                    "Task pipeline failed",
-                )
 
-                raise
-
-        # ==========================================
-        # Future Non-AI Routes
-        # ==========================================
-
-        return (
-            "این قابلیت هنوز پیاده‌سازی نشده است."
-        )
+        return "این قابلیت هنوز پیاده‌سازی نشده است."

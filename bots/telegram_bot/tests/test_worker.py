@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timedelta
 
-from database.db import add_user, init_db
+from database.db import add_user, init_db, get_connection
 from services.tasks.manager import TaskManager
 from services.tasks.worker import TaskWorker
 
@@ -27,7 +27,6 @@ class MockBot:
         )
 
 
-
 @pytest.fixture
 def test_user():
 
@@ -41,8 +40,17 @@ def test_user():
         first_name="Worker Test",
     )
 
-    return user_id
+    conn = get_connection()
 
+    conn.execute(
+        "DELETE FROM tasks WHERE user_id=?",
+        (user_id,),
+    )
+
+    conn.commit()
+    conn.close()
+
+    return user_id
 
 
 @pytest.mark.asyncio
@@ -80,11 +88,19 @@ async def test_worker_sends_reminder(
     ) > 0
 
 
-    assert bot.messages[0]["chat_id"] == test_user
+    user_messages = [
+        message
+        for message in bot.messages
+        if message["chat_id"] == test_user
+    ]
 
 
-    assert "Worker Reminder Test" in bot.messages[0]["text"]
+    assert len(
+        user_messages
+    ) > 0
 
+
+    assert "Worker Reminder Test" in user_messages[0]["text"]
 
 
 def test_worker_init():

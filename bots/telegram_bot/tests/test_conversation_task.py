@@ -1,9 +1,12 @@
+import pytest
+
 from database.db import init_db, add_user
-from services.conversation.service import ConversationService
+from services.conversation.handler import ConversationHandler
+from services.tasks.manager import TaskManager
 
 
-def test_task_message_routing():
-
+@pytest.fixture
+def task_user():
     init_db()
 
     user_id = 666666
@@ -14,20 +17,64 @@ def test_task_message_routing():
         first_name="Conversation Test",
     )
 
-    service = ConversationService()
+    return user_id
 
-    result = service.process(
-        user_id=user_id,
-        message="فردا ساعت ۱۰ یادم بنداز قبض را پرداخت کنم",
+
+@pytest.mark.asyncio
+async def test_task_message_routing_and_creation(
+    task_user,
+):
+
+    handler = ConversationHandler()
+
+    result = await handler.handle(
+        user_id=task_user,
+        message="یادم بنداز فردا ساعت 9 قبض را پرداخت کنم",
     )
 
-    assert result["allowed"] is True
+    assert result
 
-    route = result["route"]
-
-    assert route is not None
-
-    assert (
-        route.get("action")
-        == "task"
+    tasks = TaskManager.get_pending(
+        task_user
     )
+
+    assert len(tasks) >= 1
+
+    task = next(
+        task
+        for task in tasks
+        if task["title"] == "قبض را پرداخت کنم"
+    )
+
+    assert task["due_date"]
+
+    assert task["due_date"].endswith(
+        "09:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_without_due_date_is_created(
+    task_user,
+):
+
+    handler = ConversationHandler()
+
+    result = await handler.handle(
+        user_id=task_user,
+        message="یادم بنداز کتاب بخونم",
+    )
+
+    assert result
+
+    tasks = TaskManager.get_pending(
+        task_user
+    )
+
+    task = next(
+        task
+        for task in tasks
+        if task["title"] == "کتاب بخونم"
+    )
+
+    assert task["due_date"] == ""

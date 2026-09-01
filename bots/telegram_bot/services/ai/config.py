@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 
@@ -10,11 +11,10 @@ BASE_DIR = os.path.dirname(
     )
 )
 
-
 load_dotenv(
     os.path.join(
         BASE_DIR,
-        ".env"
+        ".env",
     )
 )
 
@@ -25,8 +25,8 @@ load_dotenv(
 
 AI_PROVIDER = os.getenv(
     "AI_PROVIDER",
-    "groq"
-)
+    "groq",
+).strip().lower()
 
 
 # ==========================
@@ -35,20 +35,27 @@ AI_PROVIDER = os.getenv(
 
 GROQ_API_KEY = os.getenv(
     "GROQ_API_KEY",
-    ""
-)
-
+    "",
+).strip()
 
 OPENROUTER_API_KEY = os.getenv(
     "OPENROUTER_API_KEY",
-    ""
-)
-
+    "",
+).strip()
 
 OPENAI_API_KEY = os.getenv(
     "OPENAI_API_KEY",
-    ""
-)
+    "",
+).strip()
+
+TABITOKEN_KEYS = [
+    key.strip()
+    for key in os.getenv(
+        "TABITOKEN_KEYS",
+        "",
+    ).split(",")
+    if key.strip()
+]
 
 
 # ==========================
@@ -57,14 +64,18 @@ OPENAI_API_KEY = os.getenv(
 
 GROQ_BASE_URL = os.getenv(
     "GROQ_BASE_URL",
-    "https://api.groq.com/openai/v1"
-)
-
+    "https://api.groq.com/openai/v1",
+).strip()
 
 OPENROUTER_BASE_URL = os.getenv(
     "OPENROUTER_BASE_URL",
-    "https://openrouter.ai/api/v1"
-)
+    "https://openrouter.ai/api/v1",
+).strip()
+
+TABITOKEN_BASE_URL = os.getenv(
+    "TABITOKEN_BASE_URL",
+    "https://tabitoken.com/v1",
+).strip()
 
 
 # ==========================
@@ -73,25 +84,43 @@ OPENROUTER_BASE_URL = os.getenv(
 
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
-    "llama-3.3-70b-versatile"
-)
-
+    "llama-3.3-70b-versatile",
+).strip()
 
 OPENROUTER_MODEL = os.getenv(
     "OPENROUTER_MODEL",
-    "deepseek/deepseek-chat-v3.1"
-)
+    "deepseek/deepseek-chat-v3.1",
+).strip()
+
+TABITOKEN_MODEL = os.getenv(
+    "TABITOKEN_MODEL",
+    "claude-opus-4-8",
+).strip()
 
 
 # ==========================
-# Backward Compatibility
+# Active Provider Config
 # ==========================
 
-AI_API_KEY = GROQ_API_KEY
+if AI_PROVIDER == "tabitoken":
+    AI_API_KEY = TABITOKEN_KEYS
+    AI_BASE_URL = TABITOKEN_BASE_URL
+    AI_MODEL = TABITOKEN_MODEL
 
-AI_BASE_URL = GROQ_BASE_URL
+elif AI_PROVIDER == "openrouter":
+    AI_API_KEY = OPENROUTER_API_KEY
+    AI_BASE_URL = OPENROUTER_BASE_URL
+    AI_MODEL = OPENROUTER_MODEL
 
-AI_MODEL = GROQ_MODEL
+elif AI_PROVIDER == "groq":
+    AI_API_KEY = GROQ_API_KEY
+    AI_BASE_URL = GROQ_BASE_URL
+    AI_MODEL = GROQ_MODEL
+
+else:
+    raise ValueError(
+        f"Unsupported AI_PROVIDER: {AI_PROVIDER}"
+    )
 
 
 # ==========================
@@ -100,8 +129,8 @@ AI_MODEL = GROQ_MODEL
 
 TELEGRAM_TOKEN = os.getenv(
     "TELEGRAM_TOKEN",
-    ""
-)
+    "",
+).strip()
 
 
 # ==========================
@@ -110,23 +139,26 @@ TELEGRAM_TOKEN = os.getenv(
 
 BOT_NAME = os.getenv(
     "BOT_NAME",
-    "PF-AI"
-)
-
+    "PFAST_AI",
+).strip()
 
 BOT_CREATOR = os.getenv(
     "BOT_CREATOR",
-    "@whocareit"
-)
+    "@whocareit",
+).strip()
 
 
 # ==========================
 # AI Settings
 # ==========================
 
-MAX_TOKENS = 1200
+AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "1200"))
+MAX_TOKENS = AI_MAX_TOKENS
 
-TEMPERATURE = 0.8
+AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.8"))
+TEMPERATURE = AI_TEMPERATURE
+
+AI_PROVIDER_TIMEOUT = float(os.getenv("AI_PROVIDER_TIMEOUT", "30.0"))
 
 SHORT_MEMORY_LIMIT = 20
 
@@ -138,15 +170,13 @@ LONG_MEMORY_ENABLED = True
 # ==========================
 
 SYSTEM_PROMPT = """
+تو PFAST_AI هستی.
 
-تو PF-AI هستی.
-
-یک دستیار هوشمند شخصی.
-
-همیشه فارسی روان صحبت کن.
-از اطلاعات حافظه استفاده کن.
-اگر چیزی را نمی‌دانی حدس نزن.
-خروجی Plain Text باشد.
-از Markdown استفاده نکن.
-
+یک دستیار هوشمند شخصی مبتنی بر هوش مصنوعی هستی.
+همیشه فارسی روان و طبیعی صحبت کن.
+از اطلاعات حافظه و زمینه گفتگو در صورت مرتبط بودن استفاده کن.
+اگر چیزی را نمی‌دانی، حدس نزن و صادقانه بگو.
+پاسخ‌ها روشن، کاربردی و تا حد ممکن مستقیم باشند.
+برای کدنویسی و متن فنی، ساختار مناسب و دقیق ارائه کن.
+Markdown را فقط زمانی استفاده کن که به خوانایی یا نمایش کد کمک کند.
 """

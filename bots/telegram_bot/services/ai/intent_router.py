@@ -4,78 +4,117 @@ from services.tasks.router import TaskRouter
 
 class IntentRouter:
 
+    MEMORY_KEYWORDS = (
+        "یادت باشه",
+        "یادت بمونه",
+        "ذخیره کن",
+        "به خاطر بسپار",
+        "فراموش نکن",
+        "remember this",
+        "remember",
+        "save this",
+        "save",
+    )
+
+    CODE_KEYWORDS = (
+        "python",
+        "پایتون",
+        "code",
+        "کد",
+        "برنامه نویسی",
+        "برنامه‌نویسی",
+        "programming",
+        "function",
+        "تابع",
+        "class",
+        "کلاس",
+        "bug",
+        "باگ",
+        "debug",
+        "دیباگ",
+        "error",
+        "ارور",
+        "خطا",
+        "exception",
+        "استثنا",
+        "api",
+        "کتابخانه",
+        "library",
+        "framework",
+        "فریمورک",
+        "syntax",
+        "سینتکس",
+    )
+
+
     @staticmethod
-    def detect(message: str) -> IntentResult:
+    def detect(message: str):
 
         if not message:
+
             return IntentResult(
                 intent="chat",
-                confidence=0.0,
+                confidence=0,
                 source="default",
             )
 
-        task_result = TaskRouter.detect(message)
-
-        if task_result:
-            return IntentResult(
-                intent="task",
-                confidence=task_result.get("confidence", 0.95),
-                source="task_router",
-            )
 
         text = message.lower().strip()
 
-        memory_keywords = (
-            "یادم باشه",
-            "یادت باشه",
-            "یاد بگیر",
-            "ذخیره کن",
-            "به خاطر بسپار",
-            "فراموش نکن",
-            "اسم من",
-            "نام من",
-            "من کی هستم",
-            "remember",
-            "save this",
-            "remember this",
-            "my name",
+
+        # ==========================
+        # Task
+        # ==========================
+
+        task = TaskRouter.detect(
+            message
         )
 
-        for keyword in memory_keywords:
+        if task:
+
+            return IntentResult(
+                intent="task",
+                confidence=0.95,
+                source="task_router",
+            )
+
+
+        # ==========================
+        # Memory
+        # ==========================
+
+        for keyword in IntentRouter.MEMORY_KEYWORDS:
+
             if keyword in text:
+
                 return IntentResult(
                     intent="memory",
-                    confidence=0.90,
+                    confidence=0.9,
                     source="keyword",
                 )
 
-        code_keywords = (
-            "کد",
-            "کدنویسی",
-            "پایتون",
-            "ارور",
-            "خطا",
-            "باگ",
-            "تابع",
-            "کلاس",
-            "python",
-            "code",
-            "error",
-            "bug",
-            "function",
-            "class",
-        )
 
-        for keyword in code_keywords:
+        # ==========================
+        # Code
+        # ==========================
+
+        for keyword in IntentRouter.CODE_KEYWORDS:
+
             if keyword in text:
+
                 return IntentResult(
                     intent="code",
                     confidence=0.85,
                     source="keyword",
                 )
 
+
+        # ==========================
+        # Default Chat
+        # ==========================
+
         return IntentResult(
             intent="chat",
-            confidence=0.50,
+            confidence=0.5,
             source="default",
         )

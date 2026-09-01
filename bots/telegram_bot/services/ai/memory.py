@@ -1,56 +1,96 @@
-from database.db import get_memories, save_memory, get_history
+from database.db import (
+    get_memories,
+    save_memory,
+    get_history,
+)
+
+
+class MemoryService:
+
+
+    @staticmethod
+    def apply(
+        user_id,
+        memory,
+        state=None,
+    ):
+
+        for key, value in memory.items():
+
+            save_memory(
+                user_id,
+                key,
+                value,
+            )
+
+
+    @staticmethod
+    def get_memory(
+        user_id
+    ):
+
+        rows = get_memories(
+            user_id
+        )
+
+        result = {}
+
+        for key, value in rows:
+
+            result[key] = value
+
+
+        return result
+
+
+
+    @staticmethod
+    def get_state(
+        user_id
+    ):
+
+        return {}
+
+
+
 class MemoryEngine:
 
-    def __init__(self, user_id: int):
+
+    def __init__(
+        self,
+        user_id
+    ):
+
         self.user_id = user_id
 
 
-    def get_short_memory(self, limit: int = 20):
+
+    def get_short_memory(
+        self,
+        limit=20
+    ):
 
         history = get_history(
             self.user_id,
-            limit=limit
+            limit,
         )
 
-        if not history:
-            return "تاریخچه‌ای وجود ندارد."
-
-        text = ""
-
-        for role, message in history:
-            text += f"""
-[{role}]
-{message}
-
-"""
-
-        return text.strip()
+        return history
 
 
 
-    def get_long_memory(self):
+    def get_long_memory(
+        self
+    ):
 
-        memories = get_memories(
+        return MemoryService.get_memory(
             self.user_id
         )
-
-        if not memories:
-            return "حافظه‌ای ثبت نشده است."
-
-        text = ""
-
-        for key, value in memories:
-            text += f"""
-{key}: {value}
-"""
-
-        return text.strip()
-
 
 
     def build(self):
 
         return {
             "short_memory": self.get_short_memory(),
-            "long_memory": self.get_long_memory()
+            "long_memory": self.get_long_memory(),
         }

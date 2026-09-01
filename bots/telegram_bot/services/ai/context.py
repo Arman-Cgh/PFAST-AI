@@ -1,4 +1,5 @@
 import datetime
+import logging
 
 from services.ai.memory import MemoryService
 from services.ai.profile_manager import ProfileManager
@@ -6,8 +7,20 @@ from services.ai.context_optimizer import ContextOptimizer
 
 from database.db import get_history
 
+logger = logging.getLogger(__name__)
+
+
+BLOCKED_HISTORY_PHRASES = (
+    "من PF-AI هستم",
+    "من یک دستیار هوشمند هستم",
+    "من یک هوش مصنوعی هستم",
+    "این را به خاطر دارم",
+    "این را به خاطر سپردم",
+)
+
 
 class ContextBuilder:
+
 
     def __init__(
         self,
@@ -15,9 +28,70 @@ class ContextBuilder:
     ):
         self.user_id = user_id
 
-    # ==========================
-    # Memory
-    # ==========================
+
+
+    def _build_project_context(self):
+
+        return """
+پروژه PFAST_AI
+
+نوع پروژه:
+دستیار هوشمند تلگرام مبتنی بر هوش مصنوعی
+
+
+Technology Stack:
+
+- Python
+- python-telegram-bot
+- Async architecture
+- SQLite database
+- OpenAI compatible AI providers
+
+
+ساختار کلی:
+
+handlers/
+- مدیریت پیام‌ها و دستورات تلگرام
+
+
+services/ai/
+- AI Engine
+- Context Builder
+- Prompt Builder
+- Memory System
+- Provider Manager
+- AI Providers
+
+
+services/tasks/
+- Task Manager
+- Reminder System
+- Background Worker
+
+
+database/
+- Users
+- Messages
+- Memory
+- User State
+
+
+AI Providers:
+
+- Groq
+- OpenRouter
+- Tabitoken Claude
+
+
+قوانین معماری:
+
+- Provider ها مستقل از Engine هستند.
+- Context قبل از ارسال به مدل ساخته می‌شود.
+- Memory و Profile کاربر ذخیره می‌شوند.
+- Task و Reminder سیستم جدا هستند.
+"""
+
+
 
     def _build_memory(self):
 
@@ -31,18 +105,10 @@ class ContextBuilder:
 
             memory = {}
 
-        if not memory:
 
-            return (
-                "╪¡╪º┘ü╪╕┘çΓÇî╪º█î ╪½╪¿╪¬ "
-                "┘å╪┤╪»┘ç ╪º╪│╪¬."
-            )
+        return memory or {}
 
-        return memory
 
-    # ==========================
-    # History
-    # ==========================
 
     def _build_history(self):
 
@@ -57,12 +123,12 @@ class ContextBuilder:
 
             history = []
 
+
         normalized = []
+
 
         for item in history:
 
-            # Database format:
-            # (role, message)
 
             if isinstance(item, tuple):
 
@@ -72,7 +138,6 @@ class ContextBuilder:
                 role = item[0]
                 content = item[1]
 
-            # Already normalized format
 
             elif isinstance(item, dict):
 
@@ -89,36 +154,49 @@ class ContextBuilder:
                     )
                 )
 
+
             else:
 
                 continue
 
+
+
             if not content:
                 continue
+
+
+            content = str(content)
+
+
+            if any(
+                phrase in content
+                for phrase in BLOCKED_HISTORY_PHRASES
+            ):
+                continue
+
+
 
             normalized.append(
                 {
                     "role": str(role),
-                    "content": str(content),
+                    "content": content
                 }
             )
 
+
         return normalized
 
-    # ==========================
-    # Build
-    # ==========================
+
 
     def build(
         self,
-        intent="chat"
+        intent="chat",
+        user_message=""
     ):
 
         context = {}
 
-        # ==========================
-        # Profile
-        # ==========================
+
 
         try:
 
@@ -130,19 +208,19 @@ class ContextBuilder:
 
             profile = {}
 
-        context["profile"] = profile or {}
 
-        # ==========================
-        # Memory
-        # ==========================
+
+        context["profile"] = (
+            profile or {}
+        )
+
+
 
         context["memory"] = (
             self._build_memory()
         )
 
-        # ==========================
-        # History
-        # ==========================
+
 
         if intent not in (
             "code",
@@ -157,9 +235,7 @@ class ContextBuilder:
 
             context["history"] = []
 
-        # ==========================
-        # State
-        # ==========================
+
 
         try:
 
@@ -171,11 +247,31 @@ class ContextBuilder:
 
             state = {}
 
-        context["state"] = state or {}
 
-        # ==========================
-        # Optimize
-        # ==========================
+
+        context["state"] = (
+            state or {}
+        )
+
+
+
+        # فقط حالت واقعی توسعه پروژه
+        # باعث مصرف توکن اضافه نمی‌شود
+
+        if intent in (
+            "code",
+            "architecture"
+        ):
+
+            context["project"] = (
+                self._build_project_context()
+            )
+
+        else:
+
+            context["project"] = ""
+
+
 
         try:
 
@@ -185,18 +281,20 @@ class ContextBuilder:
             )
 
         except Exception:
+            logger.warning(
+                "ContextOptimizer failed for user %s; "
+                "using unoptimized context",
+                self.user_id,
+            )
 
-            pass
 
-        # ==========================
-        # Time
-        # ==========================
 
         context["datetime"] = (
-            datetime.datetime.now().strftime(
+            datetime.datetime.now()
+            .strftime(
                 "%Y-%m-%d %H:%M"
             )
         )
 
-        return context
 
+        return context

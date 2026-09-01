@@ -9,7 +9,7 @@ class InformationExtractor:
 
     def __init__(
         self,
-        config=None
+        config=None,
     ):
         self.config = config
 
@@ -21,7 +21,6 @@ class InformationExtractor:
         provider=None,
         provider_name=None,
     ):
-
         if provider is None:
             return {}
 
@@ -30,14 +29,13 @@ class InformationExtractor:
             provider_name=provider_name,
             user_id=user_id,
             user_message=user_message,
-            assistant_response=assistant_response
+            assistant_response=assistant_response,
         )
 
 
 def _clean_memory(
-    memory: dict
+    memory: dict,
 ):
-
     if not isinstance(memory, dict):
         return {}
 
@@ -46,7 +44,7 @@ def _clean_memory(
         "job",
         "interests",
         "location",
-        "preferences"
+        "preferences",
     }
 
     cleaned = {}
@@ -64,11 +62,9 @@ def _clean_memory(
             continue
 
         if isinstance(value, list):
+
             value = ", ".join(
-                map(
-                    str,
-                    value
-                )
+                map(str, value)
             )
 
         value = str(
@@ -87,14 +83,13 @@ def _clean_memory(
 
 
 def _clean_state(
-    state: dict
+    state: dict,
 ):
-
     if not isinstance(state, dict):
         return {}
 
     return {
-        key: value
+        str(key): value
         for key, value in state.items()
         if value is not None
     }
@@ -107,24 +102,25 @@ async def extract_memory(
     user_message: str,
     assistant_response: str,
 ):
-
     prompt = f"""
 Extract only permanent useful user information.
 
-Return ONLY JSON.
+Return ONLY valid JSON.
 
 Format:
 
 {{
-"memory": {{}},
-"state": {{}}
+    "memory": {{}},
+    "state": {{}}
 }}
 
 Rules:
 
 - Do not save temporary requests.
 - Do not save conversation content.
+- Do not save guesses.
 - Save only permanent user facts.
+- If there is no permanent information, return empty objects.
 
 Allowed memory:
 
@@ -143,42 +139,90 @@ Assistant:
 {assistant_response}
 """
 
+    messages = [
+        {
+            "role": "user",
+            "content": prompt,
+        }
+    ]
+
     try:
 
-        model = ModelRouter.select(
-            provider_name,
-            "memory"
-        )
-
-        response = await provider.generate(
-            [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model
-        )
-
-        if isinstance(
-            response,
-            dict
+        # ProviderManager
+        if hasattr(
+            provider,
+            "get_model",
+        ) and hasattr(
+            provider,
+            "generate",
         ):
-            response = response.get(
-                "text",
-                ""
+
+            result = await provider.generate(
+                messages=messages,
+                intent="memory",
             )
 
+            if isinstance(
+                result,
+                dict,
+            ):
+                response = result.get(
+                    "text",
+                    "",
+                )
+            else:
+                response = result
+
+        # Raw provider compatibility
+        else:
+
+            model = ModelRouter.select(
+                provider_name,
+                "memory",
+            )
+
+            try:
+
+                response = await provider.generate(
+                    messages,
+                    model=model,
+                )
+
+            except TypeError:
+
+                response = await provider.generate(
+                    messages,
+                )
+
+            if isinstance(
+                response,
+                dict,
+            ):
+                response = response.get(
+                    "text",
+                    "",
+                )
+
+        if not response:
+            return {}
+
         cleaned = re.sub(
-            r"```json|```",
+            r"```(?:json)?",
             "",
-            response
+            str(response),
+            flags=re.IGNORECASE,
+        ).strip()
+
+        # Remove trailing code fence.
+        cleaned = cleaned.replace(
+            "```",
+            "",
         ).strip()
 
         match = re.search(
             r"\{.*\}",
             cleaned,
-            re.DOTALL
+            re.DOTALL,
         )
 
         if not match:
@@ -197,21 +241,22 @@ Assistant:
             "memory": _clean_memory(
                 data.get(
                     "memory",
-                    {}
+                    {},
                 )
             ),
             "state": _clean_state(
                 data.get(
                     "state",
-                    {}
+                    {},
                 )
-            )
+            ),
         }
 
     except Exception as e:
 
-        logger.error(
-            f"Extractor error: {e}"
+        logger.exception(
+            "Extractor error: %s",
+            e,
         )
 
         return {}

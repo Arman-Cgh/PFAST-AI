@@ -1,37 +1,20 @@
 import re
 
-from services.tasks.constants import TASK_TRIGGER_WORDS
+from services.tasks.constants import (
+    TASK_TRIGGER_WORDS,
+)
 
 
 class TaskRouter:
 
-    # ==========================
-    # Explicit Task Detection
-    # ==========================
-
     @staticmethod
-    def _detect_explicit(text: str):
+    def _normalize(
+        text: str,
+    ) -> str:
 
-        for keyword in TASK_TRIGGER_WORDS:
-
-            if keyword.lower() in text:
-
-                return {
-                    "intent": "task",
-                    "confidence": 0.95,
-                    "source": "keyword",
-                }
-
-        return None
-
-    # ==========================
-    # Normalize Text
-    # ==========================
-
-    @staticmethod
-    def _normalize(text: str) -> str:
-
-        text = str(text or "").strip().lower()
+        text = str(
+            text or ""
+        ).strip().lower()
 
         replacements = {
             "ي": "ی",
@@ -45,7 +28,10 @@ class TaskRouter:
             "ٱ": "ا",
         }
 
-        for source, target in replacements.items():
+        for source, target in (
+            replacements.items()
+        ):
+
             text = text.replace(
                 source,
                 target,
@@ -59,26 +45,54 @@ class TaskRouter:
 
         return text.strip()
 
-    # ==========================
-    # Semantic Task Detection
-    # ==========================
+    @staticmethod
+    def _detect_explicit(
+        text: str,
+    ):
+
+        for keyword in (
+            TASK_TRIGGER_WORDS
+        ):
+
+            if keyword.lower() in text:
+
+                return {
+                    "intent": "task",
+                    "confidence": 0.95,
+                    "source": "keyword",
+                }
+
+        return None
 
     @staticmethod
-    def _detect_semantic(text: str):
+    def _detect_semantic(
+        text: str,
+    ):
 
         temporal_patterns = (
             r"\bامروز\b",
             r"\bفردا\b",
             r"\bپس\s*فردا\b",
             r"\bپسفردا\b",
-            r"\bامشب\b",
-            r"\bصبح\b",
-            r"\bظهر\b",
-            r"\bعصر\b",
-            r"\bشب\b",
+            (
+                r"\b\d+\s*دقیقه\s*"
+                r"(?:دیگه|دیگر|بعد)"
+            ),
+            (
+                r"\b\d+\s*ساعت\s*"
+                r"(?:دیگه|دیگر|بعد)"
+            ),
+            (
+                r"\b(?:یک|یه|دو|سه|چهار|پنج|شش|"
+                r"هفت|هشت|نه|ده)\s+دقیقه\s+"
+                r"(?:دیگه|دیگر|بعد)"
+            ),
+            (
+                r"\b(?:یک|یه|دو|سه|چهار|پنج|شش|"
+                r"هفت|هشت|نه|ده)\s+ساعت\s+"
+                r"(?:دیگه|دیگر|بعد)"
+            ),
             r"\bساعت\s+\d{1,2}",
-            r"\b\d+\s*دقیقه\s*(?:دیگه|دیگر|بعد)",
-            r"\b\d+\s*ساعت\s*(?:دیگه|دیگر|بعد)",
         )
 
         has_time = any(
@@ -93,30 +107,19 @@ class TaskRouter:
             return None
 
         action_patterns = (
-            r"\bبررسی\s+کن\b",
-            r"\bانجام\s+بده\b",
-            r"\bانجامش\s+بده\b",
-            r"\bپیگیری\s+کن\b",
-            r"\bیادآوری\s+کن\b",
-            r"\bیادآوریش\s+کن\b",
             r"\bیادم\s+بنداز\b",
-            r"\bیادآوری\s+بده\b",
+            r"\bیادم\s+بیار\b",
+            r"\bیادآوری\s+کن\b",
+            r"\bیادآوریم\s+کن\b",
             r"\bزنگ\s+بزن\b",
             r"\bتماس\s+بگیر\b",
             r"\bپیام\s+بده\b",
             r"\bپیام\s+بفرست\b",
-            r"\bبنویس\b",
-            r"\bبفرست\b",
-            r"\bارسال\s+کن\b",
-            r"\bآماده\s+کن\b",
-            r"\bتکمیل\s+کن\b",
-            r"\bتمام\s+کن\b",
-            r"\bcheck\b",
-            r"\bdo\b",
-            r"\bfinish\b",
-            r"\bcall\b",
-            r"\bmessage\b",
+            r"\bبررسی\s+کن\b",
+            r"\bانجام\s+بده\b",
+            r"\bپیگیری\s+کن\b",
             r"\bremind\b",
+            r"\bcall\b",
             r"\bsend\b",
         )
 
@@ -137,12 +140,10 @@ class TaskRouter:
             "source": "semantic",
         }
 
-    # ==========================
-    # Detect
-    # ==========================
-
     @staticmethod
-    def detect(message: str):
+    def detect(
+        message: str,
+    ):
 
         if not message:
             return None
@@ -154,14 +155,17 @@ class TaskRouter:
         if not text:
             return None
 
-        result = TaskRouter._detect_explicit(
-            text
+        result = (
+            TaskRouter._detect_explicit(
+                text
+            )
         )
 
         if result:
             return result
 
-        return TaskRouter._detect_semantic(
-            text
+        return (
+            TaskRouter._detect_semantic(
+                text
+            )
         )
-

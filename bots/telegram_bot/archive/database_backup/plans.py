@@ -1,5 +1,5 @@
 from database.db import get_connection
-from database.subscriptions import get_subscription
+from services.billing.subscription_service import get_subscription
 
 
 # ==========================

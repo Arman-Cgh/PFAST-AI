@@ -2,8 +2,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from database.db import get_memories, get_profile as get_user_profile
-from database.plans import get_user_plan
-from database.subscriptions import get_subscription
+from services.billing.plan_service import get_user_limits, get_user_plan
+from services.billing.subscription_service import get_subscription
 
 
 def build_profile_text(user_id: int) -> str:

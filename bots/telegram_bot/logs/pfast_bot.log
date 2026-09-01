@@ -1,0 +1,220 @@
+2026-08-31 01:45:54,433 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:54,433 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 01:45:56,209 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:56,210 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 01:45:56,238 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: primary failed
+2026-08-31 01:45:56,238 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:45:56,922 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:56,922 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 01:45:57,609 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:57,610 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:57,657 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:57,703 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:57,703 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:57,704 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:57,753 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:57,753 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:57,798 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:57,799 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,388 | ERROR | PFAST_AI | PostgreSQL connection failed: RuntimeError
+2026-08-31 01:45:58,441 | ERROR | PFAST_AI | PostgreSQL connection failed: ValueError
+2026-08-31 01:45:58,556 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,556 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,557 | INFO | PFAST_AI | PFAST_AI shutdown completed
+2026-08-31 01:45:58,568 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,620 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,624 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,625 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,628 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,629 | WARNING | services.ai.pipeline.memory | Memory extraction queue is full (50 items). Dropping extraction for user 9999.
+2026-08-31 01:45:58,629 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,633 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,633 | ERROR | services.ai.pipeline.memory | Memory extraction worker job failed for user 4001: Extraction crashed intentionally
+Traceback (most recent call last):
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\pipeline\memory.py", line 117, in _worker_loop
+    await cls.extract(
+    ...<5 lines>...
+    )
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\tests\test_memory_pipeline.py", line 133, in fake_extract
+    raise RuntimeError("Extraction crashed intentionally")
+RuntimeError: Extraction crashed intentionally
+2026-08-31 01:45:58,698 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,702 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,702 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 01:45:58,764 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 01:45:58,765 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 01:46:03,016 | INFO | httpx | HTTP Request: POST https://tabitoken.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-31 01:46:04,109 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: Primary API connection failed
+2026-08-31 01:46:04,109 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:46:04,172 | WARNING | services.ai.providers.manager | Provider 'groq' timed out after 0.05 seconds.
+2026-08-31 01:46:04,172 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:46:05,051 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: primary provider failed
+2026-08-31 01:46:05,051 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:46:05,055 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: Provider 'groq' returned an empty response.
+2026-08-31 01:46:05,056 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:46:05,075 | WARNING | services.ai.providers.manager | Provider 'groq' timed out after 0.01 seconds.
+2026-08-31 01:46:05,075 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:46:05,080 | WARNING | services.ai.providers.manager | Primary provider 'custom' failed: primary provider failed
+2026-08-31 01:46:05,084 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: primary provider failed
+2026-08-31 01:46:05,085 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 01:46:05,085 | ERROR | services.ai.providers.manager | Fallback provider 'openrouter' failed
+Traceback (most recent call last):
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 396, in generate
+    await self._generate_with_provider(
+    ...<4 lines>...
+    )
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 289, in _generate_with_provider
+    response = await self._call_provider(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 157, in _call_provider
+    return await asyncio.wait_for(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\Younes\AppData\Local\Programs\Python\Python314\Lib\asyncio\tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 142, in invoke
+    return await provider.generate(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\tests\test_provider_manager_reliability.py", line 221, in generate
+    raise RuntimeError(
+        "fallback provider failed"
+    )
+RuntimeError: fallback provider failed
+2026-08-31 01:46:05,668 | WARNING | services.ai.profile | Profile load failed for user 777001
+2026-08-31 01:46:05,721 | WARNING | services.ai.profile | Profile load failed for user 777002
+2026-08-31 01:46:05,773 | WARNING | services.ai.context | ContextOptimizer failed for user 123456; using unoptimized context
+2026-08-31 01:46:05,851 | WARNING | PFAST_AI | Tabitoken key failure: ValueError
+2026-08-31 01:46:05,851 | WARNING | PFAST_AI | Tabitoken key failure: ValueError
+2026-08-31 01:46:05,852 | WARNING | PFAST_AI | Tabitoken key failure: ValueError
+2026-08-31 01:46:06,362 | WARNING | services.ai.pipeline.response | ResponsePipeline: cache write failed for user 123 (key truncated for safety)
+2026-08-31 01:46:06,810 | INFO | services.system.preflight | Startup pre-flight validation passed successfully (4 checks in 4.60ms).
+2026-08-31 01:46:06,851 | CRITICAL | services.system.preflight | STARTUP PRE-FLIGHT CHECK FAILED:
+2026-08-31 01:46:06,851 | CRITICAL | services.system.preflight |   -> [Telegram Bot Token]: TELEGRAM_TOKEN is missing or empty in environment configuration.
+2026-08-31 01:46:06,893 | CRITICAL | services.system.preflight | STARTUP PRE-FLIGHT CHECK FAILED:
+2026-08-31 01:46:06,894 | CRITICAL | services.system.preflight |   -> [Telegram Bot Token]: TELEGRAM_TOKEN is missing or empty in environment configuration.
+2026-08-31 01:46:06,935 | INFO | PFAST_AI | Running startup pre-flight validation...
+2026-08-31 01:46:07,822 | INFO | services.tasks.worker | Due reminders found: count=2
+2026-08-31 01:46:07,841 | INFO | services.tasks.worker | Reminder sent successfully: task_id=270 user_id=888888
+2026-08-31 01:46:07,860 | INFO | services.tasks.worker | Reminder sent successfully: task_id=277 user_id=777777
+2026-08-31 02:02:30,406 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:30,407 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 02:02:31,609 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:31,610 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:31,896 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:31,897 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 02:02:31,924 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: primary failed
+2026-08-31 02:02:31,924 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:32,365 | INFO | services.tasks.worker | Due reminders found: count=2
+2026-08-31 02:02:32,393 | INFO | services.tasks.worker | Reminder sent successfully: task_id=216 user_id=888888
+2026-08-31 02:02:32,412 | INFO | services.tasks.worker | Reminder sent successfully: task_id=227 user_id=888888
+2026-08-31 02:02:32,417 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:32,417 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 02:02:32,876 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:32,877 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:32,899 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:32,921 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:32,921 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:32,922 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:32,946 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:32,946 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:32,969 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:32,969 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,334 | ERROR | PFAST_AI | PostgreSQL connection failed: RuntimeError
+2026-08-31 02:02:33,361 | ERROR | PFAST_AI | PostgreSQL connection failed: ValueError
+2026-08-31 02:02:33,406 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,406 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,407 | INFO | PFAST_AI | PFAST_AI shutdown completed
+2026-08-31 02:02:33,418 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,469 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,473 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,474 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,478 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,478 | WARNING | services.ai.pipeline.memory | Memory extraction queue is full (50 items). Dropping extraction for user 9999.
+2026-08-31 02:02:33,478 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,482 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,482 | ERROR | services.ai.pipeline.memory | Memory extraction worker job failed for user 4001: Extraction crashed intentionally
+Traceback (most recent call last):
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\pipeline\memory.py", line 135, in _worker_loop
+    await cls.extract(
+    ...<5 lines>...
+    )
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\tests\test_memory_pipeline.py", line 133, in fake_extract
+    raise RuntimeError("Extraction crashed intentionally")
+RuntimeError: Extraction crashed intentionally
+2026-08-31 02:02:33,547 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,550 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,551 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker stopped
+2026-08-31 02:02:33,595 | INFO | services.ai.pipeline.memory | Memory extraction pipeline worker started
+2026-08-31 02:02:33,595 | INFO | services.ai.engine | AI Engine initialized
+2026-08-31 02:02:39,937 | INFO | openai._base_client | Retrying request to /chat/completions in 0.480952 seconds
+2026-08-31 02:02:44,106 | INFO | httpx | HTTP Request: POST https://tabitoken.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-31 02:02:44,880 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: Primary API connection failed
+2026-08-31 02:02:44,881 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:44,937 | WARNING | services.ai.providers.manager | Provider 'groq' timed out after 0.05 seconds.
+2026-08-31 02:02:44,938 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:45,796 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: primary provider failed
+2026-08-31 02:02:45,796 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:45,800 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: Provider 'groq' returned an empty response.
+2026-08-31 02:02:45,800 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:45,826 | WARNING | services.ai.providers.manager | Provider 'groq' timed out after 0.01 seconds.
+2026-08-31 02:02:45,826 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:45,830 | WARNING | services.ai.providers.manager | Primary provider 'custom' failed: primary provider failed
+2026-08-31 02:02:45,837 | WARNING | services.ai.providers.manager | Primary provider 'groq' failed: primary provider failed
+2026-08-31 02:02:45,837 | INFO | services.ai.providers.manager | Trying fallback provider 'openrouter' after 'groq' failure
+2026-08-31 02:02:45,838 | ERROR | services.ai.providers.manager | Fallback provider 'openrouter' failed
+Traceback (most recent call last):
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 396, in generate
+    await self._generate_with_provider(
+    ...<4 lines>...
+    )
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 289, in _generate_with_provider
+    response = await self._call_provider(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 157, in _call_provider
+    return await asyncio.wait_for(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\Younes\AppData\Local\Programs\Python\Python314\Lib\asyncio\tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\services\ai\providers\manager.py", line 142, in invoke
+    return await provider.generate(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "C:\Users\Younes\Desktop\AetherAI\bots\telegram_bot\tests\test_provider_manager_reliability.py", line 221, in generate
+    raise RuntimeError(
+        "fallback provider failed"
+    )
+RuntimeError: fallback provider failed
+2026-08-31 02:02:46,429 | WARNING | services.ai.profile | Profile load failed for user 777001
+2026-08-31 02:02:46,490 | WARNING | services.ai.profile | Profile load failed for user 777002
+2026-08-31 02:02:46,548 | WARNING | services.ai.context | ContextOptimizer failed for user 123456; using unoptimized context
+2026-08-31 02:02:46,657 | WARNING | PFAST_AI | Tabitoken key failure: ValueError
+2026-08-31 02:02:46,658 | WARNING | PFAST_AI | Tabitoken key failure: ValueError
+2026-08-31 02:02:46,658 | WARNING | PFAST_AI | Tabitoken key failure: ValueError
+2026-08-31 02:02:46,839 | WARNING | services.ai.pipeline.response | ResponsePipeline: cache write failed for user 123 (key truncated for safety)
+2026-08-31 02:02:47,362 | INFO | services.system.preflight | Startup pre-flight validation passed successfully (4 checks in 6.92ms).
+2026-08-31 02:02:47,415 | CRITICAL | services.system.preflight | STARTUP PRE-FLIGHT CHECK FAILED:
+2026-08-31 02:02:47,415 | CRITICAL | services.system.preflight |   -> [Telegram Bot Token]: TELEGRAM_TOKEN is missing or empty in environment configuration.
+2026-08-31 02:02:47,472 | CRITICAL | services.system.preflight | STARTUP PRE-FLIGHT CHECK FAILED:
+2026-08-31 02:02:47,472 | CRITICAL | services.system.preflight |   -> [Telegram Bot Token]: TELEGRAM_TOKEN is missing or empty in environment configuration.
+2026-08-31 02:02:47,513 | INFO | PFAST_AI | Running startup pre-flight validation...
+2026-08-31 02:02:48,599 | INFO | services.tasks.worker | Due reminders found: count=2
+2026-08-31 02:02:48,634 | INFO | services.tasks.worker | Reminder sent successfully: task_id=281 user_id=888888
+2026-08-31 02:02:48,653 | INFO | services.tasks.worker | Reminder sent successfully: task_id=288 user_id=777777

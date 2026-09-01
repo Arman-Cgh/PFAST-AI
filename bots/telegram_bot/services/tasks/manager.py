@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from database.db import get_connection
 
 
@@ -43,6 +45,58 @@ class TaskManager:
             conn.commit()
 
             return cursor.lastrowid
+
+        finally:
+
+            conn.close()
+
+    # ==========================
+    # Get By ID
+    # ==========================
+
+    @staticmethod
+    def get_by_id(
+        task_id: int,
+        user_id: int,
+    ):
+
+        conn = get_connection()
+
+        try:
+
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    title,
+                    description,
+                    due_date,
+                    completed
+                FROM tasks
+                WHERE id = ?
+                  AND user_id = ?
+                LIMIT 1
+                """,
+                (
+                    task_id,
+                    user_id,
+                ),
+            )
+
+            row = cursor.fetchone()
+
+            if not row:
+                return None
+
+            return {
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "due_date": row[3],
+                "completed": bool(row[4]),
+            }
 
         finally:
 
@@ -216,7 +270,7 @@ class TaskManager:
             conn.close()
 
     # ==========================
-    # Worker
+    # Worker / Due Tasks
     # ==========================
 
     @staticmethod
@@ -244,15 +298,68 @@ class TaskManager:
 
             rows = cursor.fetchall()
 
-            return [
-                {
-                    "id": row[0],
-                    "user_id": row[1],
-                    "title": row[2],
-                    "due_date": row[3],
-                }
-                for row in rows
-            ]
+            now = datetime.now()
+
+            due_tasks = []
+
+            for row in rows:
+
+                due_date = (
+                    row[3] or ""
+                ).strip()
+
+                if not due_date:
+                    continue
+
+                target = None
+
+                # ==========================
+                # Full datetime
+                # ==========================
+
+                try:
+
+                    target = datetime.strptime(
+                        due_date,
+                        "%Y-%m-%d %H:%M",
+                    )
+
+                except ValueError:
+                    pass
+
+                # ==========================
+                # Date only
+                # ==========================
+
+                if target is None:
+
+                    try:
+
+                        target = datetime.strptime(
+                            due_date,
+                            "%Y-%m-%d",
+                        )
+
+                    except ValueError:
+
+                        continue
+
+                # ==========================
+                # Due check
+                # ==========================
+
+                if target <= now:
+
+                    due_tasks.append(
+                        {
+                            "id": row[0],
+                            "user_id": row[1],
+                            "title": row[2],
+                            "due_date": row[3],
+                        }
+                    )
+
+            return due_tasks
 
         finally:
 

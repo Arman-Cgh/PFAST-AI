@@ -110,7 +110,8 @@ async def test_provider_manager_fallback():
                 "role": "user",
                 "content": "hello",
             }
-        ]
+        ],
+        provider_name="groq",
     )
 
 

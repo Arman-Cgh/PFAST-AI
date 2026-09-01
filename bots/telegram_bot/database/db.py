@@ -3,10 +3,11 @@ import os
 import re
 import sqlite3
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import BOT_USERNAME, BASE_DIR
 from core.logger import logger
+
 
 
 # ========================================================
@@ -19,7 +20,10 @@ DB_NAME = os.path.join(
     "users.db",
 )
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "",
+).strip()
 
 
 # ========================================================
@@ -31,10 +35,20 @@ class PGCursor:
         self._cur = cur
 
     def execute(self, sql, params=None):
-        converted_sql = sql.replace("?", "%s")
+        converted_sql = sql.replace(
+            "?",
+            "%s",
+        )
+
         if params is None:
-            return self._cur.execute(converted_sql)
-        return self._cur.execute(converted_sql, params)
+            return self._cur.execute(
+                converted_sql
+            )
+
+        return self._cur.execute(
+            converted_sql,
+            params,
+        )
 
     def executemany(self, sql, seq_of_params):
         return self._cur.executemany(
@@ -48,8 +62,15 @@ class PGCursor:
     def fetchall(self):
         return self._cur.fetchall()
 
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
     def __getattr__(self, item):
-        return getattr(self._cur, item)
+        return getattr(
+            self._cur,
+            item,
+        )
 
 
 class PGConnection:
@@ -57,10 +78,15 @@ class PGConnection:
         self._conn = conn
 
     def cursor(self):
-        return PGCursor(self._conn.cursor())
+        return PGCursor(
+            self._conn.cursor()
+        )
 
     def commit(self):
         return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
 
     def close(self):
         try:
@@ -71,10 +97,17 @@ class PGConnection:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(
+        self,
+        exc_type,
+        exc,
+        tb,
+    ):
         try:
             if exc_type is None:
                 self._conn.commit()
+            else:
+                self._conn.rollback()
         finally:
             self.close()
 
@@ -87,13 +120,18 @@ def _connect_postgresql():
     import psycopg2
 
     return PGConnection(
-        psycopg2.connect(DATABASE_URL)
+        psycopg2.connect(
+            DATABASE_URL
+        )
     )
 
 
 def get_connection():
     os.makedirs(
-        os.path.join(BASE_DIR, "database"),
+        os.path.join(
+            BASE_DIR,
+            "database",
+        ),
         exist_ok=True,
     )
 
@@ -102,25 +140,196 @@ def get_connection():
             return _connect_postgresql()
         except Exception as exc:
             logger.error(
-                f"POSTGRES CONNECTION FAILED: {exc}"
-                )
-
-            logger.warning(
-                "FALLBACK: SQLite"
+                "PostgreSQL connection failed: %s",
+                type(exc).__name__,
             )
+            raise ConnectionError(
+                f"PostgreSQL connection failed: {type(exc).__name__}"
+            ) from None
 
     conn = sqlite3.connect(
         DB_NAME,
         timeout=30,
     )
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 30000")
+
+    conn.execute(
+        "PRAGMA foreign_keys = ON"
+    )
+
+    conn.execute(
+        "PRAGMA journal_mode = WAL"
+    )
+
+    conn.execute(
+        "PRAGMA busy_timeout = 30000"
+    )
+
     return conn
 
 
 def _is_sqlite_connection(conn):
-    return isinstance(conn, sqlite3.Connection)
+    return isinstance(
+        conn,
+        sqlite3.Connection,
+    )
+
+def _get_sqlite_columns(conn, table_name):
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"PRAGMA table_info({table_name})"
+    )
+
+    return {
+        row[1]
+        for row in cursor.fetchall()
+    }
+
+
+def _migrate_sqlite_schema(conn):
+    """
+    Apply lightweight migrations to existing SQLite databases.
+
+    This function only adds missing columns/tables required by
+    the current schema. Existing user data is preserved.
+    """
+
+    cursor = conn.cursor()
+
+    # ----------------------------------------------------
+    # qa_cache
+    # ----------------------------------------------------
+
+    cursor.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type='table'
+        AND name='qa_cache'
+        """
+    )
+
+    qa_cache_exists = cursor.fetchone() is not None
+
+    if qa_cache_exists:
+        columns = _get_sqlite_columns(
+            conn,
+            "qa_cache",
+        )
+
+        if "prompt_version" not in columns:
+            cursor.execute(
+                """
+                ALTER TABLE qa_cache
+                ADD COLUMN prompt_version TEXT NOT NULL DEFAULT '1'
+                """
+            )
+
+        if "provider" not in columns:
+            cursor.execute(
+                """
+                ALTER TABLE qa_cache
+                ADD COLUMN provider TEXT NOT NULL DEFAULT ''
+                """
+            )
+
+        if "model" not in columns:
+            cursor.execute(
+                """
+                ALTER TABLE qa_cache
+                ADD COLUMN model TEXT NOT NULL DEFAULT ''
+                """
+            )
+
+        if "created_at" not in columns:
+            cursor.execute(
+                """
+                ALTER TABLE qa_cache
+                ADD COLUMN created_at TEXT NOT NULL DEFAULT ''
+                """
+            )
+
+        if "expires_at" not in columns:
+            cursor.execute(
+                """
+                ALTER TABLE qa_cache
+                ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''
+                """
+            )
+
+        # Fill created_at for old rows where the new column
+        # was added with the empty-string default.
+        cursor.execute(
+            """
+            UPDATE qa_cache
+            SET created_at = CURRENT_TIMESTAMP
+            WHERE created_at = ''
+            """
+        )
+
+    # ----------------------------------------------------
+    # referral_content
+    # ----------------------------------------------------
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS referral_content(
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            message_template TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+
+    # ----------------------------------------------------
+    # rate_limit
+    # ----------------------------------------------------
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rate_limit(
+            user_id INTEGER PRIMARY KEY,
+            last_request REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY(user_id)
+                REFERENCES users(id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+        )
+        """
+    )
+
+    # ----------------------------------------------------
+    # Commit migrations before indexes are created.
+    # ----------------------------------------------------
+
+    conn.commit()
+
+
+def _insert_and_get_id(
+    conn,
+    cursor,
+    sql,
+    params,
+):
+    """
+    Execute an INSERT and safely return its generated ID
+    on both SQLite and PostgreSQL.
+    """
+
+    if _is_sqlite_connection(conn):
+        cursor.execute(
+            sql,
+            params,
+        )
+        return cursor.lastrowid
+
+    cursor.execute(
+        sql + " RETURNING id",
+        params,
+    )
+
+    row = cursor.fetchone()
+
+    return row[0] if row else None
 
 
 # ========================================================
@@ -140,6 +349,7 @@ SQLITE_SCHEMA = (
         CHECK(length(plan) > 0)
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS messages(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +363,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS tasks(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,6 +380,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS memory(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,6 +394,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS qa_cache(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,6 +420,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS user_state(
         user_id INTEGER PRIMARY KEY,
@@ -219,6 +433,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS plans(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,6 +448,7 @@ SQLITE_SCHEMA = (
             CHECK(cooldown_seconds >= 0)
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS plan_prices(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -250,6 +466,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS subscriptions(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -258,6 +475,7 @@ SQLITE_SCHEMA = (
         start_date TEXT,
         duration_days INTEGER NOT NULL DEFAULT 0
             CHECK(duration_days >= 0),
+        expires_at TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'inactive',
         FOREIGN KEY(user_id)
             REFERENCES users(id)
@@ -269,6 +487,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS usage(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -289,6 +508,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS rate_limit(
         user_id INTEGER PRIMARY KEY,
@@ -299,6 +519,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS payment_requests(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,6 +544,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS referral_settings(
         id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -337,6 +559,14 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
+    """
+    CREATE TABLE IF NOT EXISTS referral_content(
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        message_template TEXT NOT NULL DEFAULT ''
+    )
+    """,
+
     """
     CREATE TABLE IF NOT EXISTS referrals(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,6 +574,8 @@ SQLITE_SCHEMA = (
         invited_id INTEGER NOT NULL,
         reward_given INTEGER NOT NULL DEFAULT 0
             CHECK(reward_given IN (0, 1)),
+        reward_batch INTEGER NOT NULL DEFAULT 0
+            CHECK(reward_batch >= 0),
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(inviter_id, invited_id),
         CHECK(inviter_id <> invited_id),
@@ -357,6 +589,7 @@ SQLITE_SCHEMA = (
             ON UPDATE CASCADE
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS banned_users(
         user_id INTEGER PRIMARY KEY,
@@ -366,6 +599,18 @@ SQLITE_SCHEMA = (
             REFERENCES users(id)
             ON DELETE CASCADE
             ON UPDATE CASCADE
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS feature_flags(
+        feature_name TEXT PRIMARY KEY,
+        is_enabled INTEGER NOT NULL DEFAULT 1
+            CHECK(is_enabled IN (0, 1)),
+        category TEXT NOT NULL DEFAULT 'general',
+        display_name TEXT NOT NULL DEFAULT '',
+        disabled_message TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
 )
@@ -383,6 +628,7 @@ POSTGRES_SCHEMA = (
         plan TEXT NOT NULL DEFAULT 'free'
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS messages(
         id BIGSERIAL PRIMARY KEY,
@@ -393,6 +639,7 @@ POSTGRES_SCHEMA = (
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS tasks(
         id BIGSERIAL PRIMARY KEY,
@@ -402,10 +649,11 @@ POSTGRES_SCHEMA = (
         description TEXT NOT NULL DEFAULT '',
         due_date TEXT NOT NULL DEFAULT '',
         completed INTEGER NOT NULL DEFAULT 0
-            CHECK(completed IN (0,1)),
+            CHECK(completed IN (0, 1)),
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS memory(
         id BIGSERIAL PRIMARY KEY,
@@ -416,6 +664,7 @@ POSTGRES_SCHEMA = (
         UNIQUE(user_id, memory_key)
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS qa_cache(
         id BIGSERIAL PRIMARY KEY,
@@ -438,79 +687,107 @@ POSTGRES_SCHEMA = (
         )
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS user_state(
-        user_id BIGINT PRIMARY KEY REFERENCES users(id)
+        user_id BIGINT PRIMARY KEY
+            REFERENCES users(id)
             ON DELETE CASCADE ON UPDATE CASCADE,
         active_project TEXT NOT NULL DEFAULT '',
         current_goal TEXT NOT NULL DEFAULT '',
         preferences TEXT NOT NULL DEFAULT '{}'
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS plans(
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
-        daily_messages INTEGER NOT NULL DEFAULT 30 CHECK(daily_messages >= 0),
-        daily_images INTEGER NOT NULL DEFAULT 2 CHECK(daily_images >= 0),
+        daily_messages INTEGER NOT NULL DEFAULT 30
+            CHECK(daily_messages >= 0),
+        daily_images INTEGER NOT NULL DEFAULT 2
+            CHECK(daily_images >= 0),
         daily_technical_questions INTEGER NOT NULL DEFAULT 3
             CHECK(daily_technical_questions >= 0),
         cooldown_seconds INTEGER NOT NULL DEFAULT 5
             CHECK(cooldown_seconds >= 0)
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS plan_prices(
         id BIGSERIAL PRIMARY KEY,
-        plan_name TEXT NOT NULL UNIQUE REFERENCES plans(name)
+        plan_name TEXT NOT NULL UNIQUE
+            REFERENCES plans(name)
             ON DELETE RESTRICT ON UPDATE CASCADE,
-        duration_days INTEGER NOT NULL DEFAULT 30 CHECK(duration_days > 0),
-        price INTEGER NOT NULL DEFAULT 0 CHECK(price >= 0),
+        duration_days INTEGER NOT NULL DEFAULT 30
+            CHECK(duration_days > 0),
+        price INTEGER NOT NULL DEFAULT 0
+            CHECK(price >= 0),
         currency TEXT NOT NULL DEFAULT 'IRR',
-        is_active INTEGER NOT NULL DEFAULT 1 CHECK(is_active IN (0,1))
+        is_active INTEGER NOT NULL DEFAULT 1
+            CHECK(is_active IN (0, 1))
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS subscriptions(
         id BIGSERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL UNIQUE REFERENCES users(id)
+        user_id BIGINT NOT NULL UNIQUE
+            REFERENCES users(id)
             ON DELETE CASCADE ON UPDATE CASCADE,
-        plan TEXT NOT NULL DEFAULT 'free' REFERENCES plans(name)
+        plan TEXT NOT NULL DEFAULT 'free'
+            REFERENCES plans(name)
             ON DELETE RESTRICT ON UPDATE CASCADE,
         start_date TEXT,
-        duration_days INTEGER NOT NULL DEFAULT 0 CHECK(duration_days >= 0),
+        duration_days INTEGER NOT NULL DEFAULT 0
+            CHECK(duration_days >= 0),
+        expires_at TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'inactive'
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS usage(
         id BIGSERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL REFERENCES users(id)
+        user_id BIGINT NOT NULL
+            REFERENCES users(id)
             ON DELETE CASCADE ON UPDATE CASCADE,
         date TEXT NOT NULL,
-        messages INTEGER NOT NULL DEFAULT 0 CHECK(messages >= 0),
-        images INTEGER NOT NULL DEFAULT 0 CHECK(images >= 0),
-        code_requests INTEGER NOT NULL DEFAULT 0 CHECK(code_requests >= 0),
-        searches INTEGER NOT NULL DEFAULT 0 CHECK(searches >= 0),
+        messages INTEGER NOT NULL DEFAULT 0
+            CHECK(messages >= 0),
+        images INTEGER NOT NULL DEFAULT 0
+            CHECK(images >= 0),
+        code_requests INTEGER NOT NULL DEFAULT 0
+            CHECK(code_requests >= 0),
+        searches INTEGER NOT NULL DEFAULT 0
+            CHECK(searches >= 0),
         UNIQUE(user_id, date)
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS rate_limit(
-        user_id BIGINT PRIMARY KEY REFERENCES users(id)
+        user_id BIGINT PRIMARY KEY
+            REFERENCES users(id)
             ON DELETE CASCADE ON UPDATE CASCADE,
         last_request DOUBLE PRECISION NOT NULL DEFAULT 0
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS payment_requests(
         id BIGSERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL REFERENCES users(id)
+        user_id BIGINT NOT NULL
+            REFERENCES users(id)
             ON DELETE CASCADE ON UPDATE CASCADE,
-        plan_name TEXT NOT NULL REFERENCES plans(name)
+        plan_name TEXT NOT NULL
+            REFERENCES plans(name)
             ON DELETE RESTRICT ON UPDATE CASCADE,
-        duration_days INTEGER NOT NULL DEFAULT 30 CHECK(duration_days > 0),
-        amount INTEGER NOT NULL DEFAULT 0 CHECK(amount >= 0),
+        duration_days INTEGER NOT NULL DEFAULT 30
+            CHECK(duration_days > 0),
+        amount INTEGER NOT NULL DEFAULT 0
+            CHECK(amount >= 0),
         currency TEXT NOT NULL DEFAULT 'IRR',
         gateway TEXT NOT NULL DEFAULT 'placeholder',
         gateway_reference TEXT NOT NULL DEFAULT '',
@@ -518,112 +795,281 @@ POSTGRES_SCHEMA = (
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+
     """
     CREATE TABLE IF NOT EXISTS referral_settings(
         id INTEGER PRIMARY KEY CHECK(id = 1),
-        required_invites INTEGER NOT NULL DEFAULT 3 CHECK(required_invites > 0),
-        reward_days INTEGER NOT NULL DEFAULT 3 CHECK(reward_days > 0),
+        required_invites INTEGER NOT NULL DEFAULT 3
+            CHECK(required_invites > 0),
+        reward_days INTEGER NOT NULL DEFAULT 3
+            CHECK(reward_days > 0),
         reward_plan TEXT NOT NULL DEFAULT 'pro'
-            REFERENCES plans(name) ON DELETE RESTRICT ON UPDATE CASCADE
+            REFERENCES plans(name)
+            ON DELETE RESTRICT ON UPDATE CASCADE
     )
     """,
+
     """
-    CREATE TABLE IF NOT EXISTS referrals(
-        id BIGSERIAL PRIMARY KEY,
-        inviter_id BIGINT NOT NULL REFERENCES users(id)
-            ON DELETE CASCADE ON UPDATE CASCADE,
-        invited_id BIGINT NOT NULL REFERENCES users(id)
-            ON DELETE CASCADE ON UPDATE CASCADE,
-        reward_given INTEGER NOT NULL DEFAULT 0 CHECK(reward_given IN (0,1)),
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(inviter_id, invited_id),
-        CHECK(inviter_id <> invited_id)
+    CREATE TABLE IF NOT EXISTS referral_content(
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        message_template TEXT NOT NULL DEFAULT ''
     )
     """,
+    
+    """
+CREATE TABLE IF NOT EXISTS referrals(
+    id BIGSERIAL PRIMARY KEY,
+    inviter_id BIGINT NOT NULL REFERENCES users(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    invited_id BIGINT NOT NULL REFERENCES users(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    reward_given INTEGER NOT NULL DEFAULT 0
+        CHECK(reward_given IN (0,1)),
+    reward_batch INTEGER NOT NULL DEFAULT 0
+        CHECK(reward_batch >= 0),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(inviter_id, invited_id),
+    CHECK(inviter_id <> invited_id)
+)
+    """,
+
     """
     CREATE TABLE IF NOT EXISTS banned_users(
-        user_id BIGINT PRIMARY KEY REFERENCES users(id)
+        user_id BIGINT PRIMARY KEY
+            REFERENCES users(id)
             ON DELETE CASCADE ON UPDATE CASCADE,
         reason TEXT NOT NULL DEFAULT '',
         banned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+
+    """
+    CREATE TABLE IF NOT EXISTS feature_flags(
+        feature_name TEXT PRIMARY KEY,
+        is_enabled INTEGER NOT NULL DEFAULT 1
+            CHECK(is_enabled IN (0, 1)),
+        category TEXT NOT NULL DEFAULT 'general',
+        display_name TEXT NOT NULL DEFAULT '',
+        disabled_message TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
 )
 
 
 INDEXES = (
-    "CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)",
-    "CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)",
-    "CREATE INDEX IF NOT EXISTS idx_memory_user_id ON memory(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_user_id "
+    "ON messages(user_id)",
+
+    "CREATE INDEX IF NOT EXISTS idx_tasks_user_id "
+    "ON tasks(user_id)",
+
+    "CREATE INDEX IF NOT EXISTS idx_memory_user_id "
+    "ON memory(user_id)",
+
     "CREATE INDEX IF NOT EXISTS idx_qa_cache_lookup "
     "ON qa_cache(user_id, normalized_question, prompt_version)",
-    "CREATE INDEX IF NOT EXISTS idx_qa_cache_expires_at "
-    "ON qa_cache(expires_at)",
+
     "CREATE INDEX IF NOT EXISTS idx_payment_requests_user_id "
     "ON payment_requests(user_id)",
+
     "CREATE INDEX IF NOT EXISTS idx_payment_requests_status "
     "ON payment_requests(status)",
+
     "CREATE INDEX IF NOT EXISTS idx_referrals_inviter_id "
     "ON referrals(inviter_id)",
+
     "CREATE INDEX IF NOT EXISTS idx_referrals_invited_id "
     "ON referrals(invited_id)",
+
     "CREATE INDEX IF NOT EXISTS idx_usage_user_date "
     "ON usage(user_id, date)",
+
     "CREATE INDEX IF NOT EXISTS idx_subscriptions_status "
     "ON subscriptions(status)",
+
     "CREATE INDEX IF NOT EXISTS idx_banned_users_user_id "
     "ON banned_users(user_id)",
 )
 
 
+# ========================================================
+# Database Initialization
+# ========================================================
+
 def init_db():
     conn = get_connection()
-    cursor = conn.cursor()
 
-    schema = (
-        POSTGRES_SCHEMA
-        if DATABASE_URL and not _is_sqlite_connection(conn)
-        else SQLITE_SCHEMA
-    )
+    try:
+        cursor = conn.cursor()
 
-    for statement in schema:
-        cursor.execute(statement)
+        use_postgresql = (
+            bool(DATABASE_URL)
+            and not _is_sqlite_connection(conn)
+        )
 
-    if DATABASE_URL and not _is_sqlite_connection(conn):
+        schema = (
+            POSTGRES_SCHEMA
+            if use_postgresql
+            else SQLITE_SCHEMA
+        )
+
+        # =================================================
+        # 1. Create complete base schema
+        # =================================================
+
+        for statement in schema:
+            cursor.execute(statement)
+
+        # =================================================
+        # 2. Create indexes only after schema exists
+        # =================================================
+
         for index_sql in INDEXES:
             cursor.execute(index_sql)
+
+        # =================================================
+        # 3. Ensure schema compatibility
+        # =================================================
+
+        _ensure_schema_compatibility(conn, cursor)
+
+        # =================================================
+        # 4. Seed only missing defaults
+        # =================================================
+
+        _seed_defaults(cursor)
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+def _ensure_schema_compatibility(
+    conn,
+    cursor,
+):
+    """
+    Add tables and columns that were introduced after the initial schema.
+
+    This keeps an existing SQLite/Postgres installation upgradeable without
+    destroying existing data.
+    """
+
+    if _is_sqlite_connection(conn):
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feature_flags(
+                feature_name TEXT PRIMARY KEY,
+                is_enabled INTEGER NOT NULL DEFAULT 1
+                    CHECK(is_enabled IN (0, 1)),
+                category TEXT NOT NULL DEFAULT 'general',
+                display_name TEXT NOT NULL DEFAULT '',
+                disabled_message TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        columns = {
+            row[1]
+            for row in cursor.execute(
+                "PRAGMA table_info(subscriptions)"
+            ).fetchall()
+        }
+
+        if "expires_at" not in columns:
+            cursor.execute(
+                """
+                ALTER TABLE subscriptions
+                ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''
+                """
+            )
+
+        referral_columns = {
+            row[1]
+            for row in cursor.execute(
+                "PRAGMA table_info(referrals)"
+            ).fetchall()
+        }
+
+        if "reward_batch" not in referral_columns:
+            cursor.execute(
+                """
+                ALTER TABLE referrals
+                ADD COLUMN reward_batch INTEGER NOT NULL DEFAULT 0
+                """
+            )
+
     else:
-        for index_sql in INDEXES:
-            cursor.execute(index_sql)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feature_flags(
+                feature_name TEXT PRIMARY KEY,
+                is_enabled INTEGER NOT NULL DEFAULT 1
+                    CHECK(is_enabled IN (0, 1)),
+                category TEXT NOT NULL DEFAULT 'general',
+                display_name TEXT NOT NULL DEFAULT '',
+                disabled_message TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
 
-    _seed_defaults(cursor)
-    conn.commit()
-    conn.close()
+        cursor.execute(
+            """
+            ALTER TABLE subscriptions
+            ADD COLUMN IF NOT EXISTS expires_at TEXT NOT NULL DEFAULT ''
+            """
+        )
+
+        cursor.execute(
+            """
+            ALTER TABLE referrals
+            ADD COLUMN IF NOT EXISTS reward_batch INTEGER NOT NULL DEFAULT 0
+            """
+        )
 
 
 def _seed_defaults(cursor):
     cursor.execute(
-    """
-    INSERT INTO plans
-    (
-        name,
-        daily_messages,
-        daily_images,
-        daily_technical_questions,
-        cooldown_seconds
+        """
+        INSERT INTO plans
+        (
+            name,
+            daily_messages,
+            daily_images,
+            daily_technical_questions,
+            cooldown_seconds
+        )
+        VALUES
+        (?, ?, ?, ?, ?),
+        (?, ?, ?, ?, ?),
+        (?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
+        """,
+        (
+            "free",
+            30,
+            1,
+            3,
+            5,
+            "pro",
+            1000,
+            2,
+            10,
+            1,
+            "ultra",
+            999999,
+            4,
+            99999,
+            0,
+        ),
     )
-    VALUES
-    (?, ?, ?, ?, ?),
-    (?, ?, ?, ?, ?),
-    (?, ?, ?, ?, ?)
-    ON CONFLICT DO NOTHING
-    """,
-    (
-        "free", 30, 1, 3, 5,
-        "pro", 1000, 2, 10, 1,
-        "ultra", 999999, 4, 99999, 0,
-    ),
-)
 
     cursor.execute(
         """
@@ -642,9 +1088,21 @@ def _seed_defaults(cursor):
         ON CONFLICT(plan_name) DO NOTHING
         """,
         (
-            "free", 30, 0, "IRR", 1,
-            "pro", 30, 300000, "IRR", 1,
-            "ultra", 30, 700000, "IRR", 1,
+            "free",
+            30,
+            0,
+            "IRR",
+            1,
+            "pro",
+            30,
+            300000,
+            "IRR",
+            1,
+            "ultra",
+            30,
+            700000,
+            "IRR",
+            1,
         ),
     )
 
@@ -660,6 +1118,25 @@ def _seed_defaults(cursor):
         ON CONFLICT(id) DO NOTHING
         """,
         ("pro",),
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO referral_content(
+            id,
+            message_template
+        )
+        VALUES(1, ?)
+        ON CONFLICT(id) DO NOTHING
+        """,
+        (
+            "👥 دعوت از دوستان 🎁\n\n"
+            "🔗 لینک اختصاصی شما:\n{link}\n\n"
+            "🎁 با هر {required_invites} دعوت موفق، "
+            "{reward_days} روز پلن {reward_plan} هدیه می‌گیری!\n\n"
+            "📌 دوستت فقط باید از لینک بالا وارد ربات بشه.\n\n"
+            "❤️ ممنون که PFAST_AI رو به دوستات معرفی می‌کنی.",
+        ),
     )
 
 
@@ -680,26 +1157,52 @@ def _parse_price_value(value):
     if value is None:
         return None
 
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
         return int(value)
 
     text = str(value).strip()
+
     if not text:
         return None
 
     text = text.translate(
-        str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+        str.maketrans(
+            "۰۱۲۳۴۵۶۷۸۹",
+            "0123456789",
+        )
     )
+
     text = (
         text
         .replace("٫", ".")
         .replace("٬", "")
         .replace("،", "")
     )
-    text = re.sub(r"(\d)/(\d)", r"\1\2", text)
-    text = re.sub(r"[^\w\s.-]", " ", text)
 
-    tokens = [token for token in re.split(r"\s+", text) if token]
+    text = re.sub(
+        r"(\d)/(\d)",
+        r"\1\2",
+        text,
+    )
+
+    text = re.sub(
+        r"[^\w\s.-]",
+        " ",
+        text,
+    )
+
+    tokens = [
+        token
+        for token in re.split(
+            r"\s+",
+            text,
+        )
+        if token
+    ]
+
     if not tokens:
         return None
 
@@ -737,28 +1240,45 @@ def _parse_price_value(value):
                 number *= units[lower]
             continue
 
-        match = re.fullmatch(r"([0-9]+)([^0-9]+)?", token)
+        match = re.fullmatch(
+            r"([0-9]+)([^0-9]+)?",
+            token,
+        )
+
         if match:
-            parsed = int(match.group(1))
-            suffix = (match.group(2) or "").lower()
+            parsed = int(
+                match.group(1)
+            )
+
+            suffix = (
+                match.group(2) or ""
+            ).lower()
+
             if suffix in units:
                 parsed *= units[suffix]
 
             if number is None:
                 number = parsed
             else:
-                number = int(f"{number}{parsed}")
+                number = int(
+                    f"{number}{parsed}"
+                )
+
             continue
 
         try:
-            parsed = int(float(token))
+            parsed = int(
+                float(token)
+            )
         except ValueError:
             continue
 
         if number is None:
             number = parsed
         else:
-            number = int(f"{number}{parsed}")
+            number = int(
+                f"{number}{parsed}"
+            )
 
     return number
 
@@ -777,48 +1297,59 @@ def get_cached_answer(
     conn = get_connection()
     cursor = conn.cursor()
 
-    normalized_question = normalize_text(question)
-    now = datetime.now().isoformat()
+    try:
+        normalized_question = normalize_text(
+            question
+        )
 
-    cursor.execute(
+        now = datetime.now().isoformat()
+
+        cursor.execute(
+            """
+            DELETE FROM qa_cache
+            WHERE expires_at != ''
+            AND expires_at < ?
+            """,
+            (now,),
+        )
+
+        query = """
+            SELECT answer
+            FROM qa_cache
+            WHERE user_id=?
+            AND normalized_question=?
+            AND prompt_version=?
         """
-        DELETE FROM qa_cache
-        WHERE expires_at != ''
-        AND expires_at < ?
-        """,
-        (now,),
-    )
 
-    query = """
-        SELECT answer
-        FROM qa_cache
-        WHERE user_id=?
-        AND normalized_question=?
-        AND prompt_version=?
-    """
-    params = [
-        user_id,
-        normalized_question,
-        prompt_version or "1",
-    ]
+        params = [
+            user_id,
+            normalized_question,
+            prompt_version or "1",
+        ]
 
-    if provider is not None:
-        query += " AND provider=?"
-        params.append(provider)
+        if provider is not None:
+            query += " AND provider=?"
+            params.append(provider)
 
-    if model is not None:
-        query += " AND model=?"
-        params.append(model)
+        if model is not None:
+            query += " AND model=?"
+            params.append(model)
 
-    query += " ORDER BY id DESC LIMIT 1"
+        query += " ORDER BY id DESC LIMIT 1"
 
-    cursor.execute(query, tuple(params))
-    row = cursor.fetchone()
+        cursor.execute(
+            query,
+            tuple(params),
+        )
 
-    conn.commit()
-    conn.close()
+        row = cursor.fetchone()
 
-    return row[0] if row else None
+        conn.commit()
+
+        return row[0] if row else None
+
+    finally:
+        conn.close()
 
 
 def save_cached_answer(
@@ -833,213 +1364,298 @@ def save_cached_answer(
     conn = get_connection()
     cursor = conn.cursor()
 
-    normalized_question = normalize_text(question)
-    now = datetime.now().isoformat()
-
-    cursor.execute(
-        """
-        INSERT INTO qa_cache
-        (
-            user_id,
-            question,
-            normalized_question,
-            answer,
-            prompt_version,
-            provider,
-            model,
-            created_at,
-            expires_at
+    try:
+        normalized_question = normalize_text(
+            question
         )
-        VALUES(?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(
-            user_id,
-            normalized_question,
-            prompt_version,
-            provider,
-            model
-        )
-        DO UPDATE SET
-            question=excluded.question,
-            answer=excluded.answer,
-            created_at=excluded.created_at,
-            expires_at=excluded.expires_at
-        """,
-        (
-            user_id,
-            question,
-            normalized_question,
-            answer,
-            prompt_version or "1",
-            provider or "",
-            model or "",
-            now,
-            expires_at or "",
-        ),
-    )
 
-    conn.commit()
-    conn.close()
+        now = datetime.now().isoformat()
+
+        cursor.execute(
+            """
+            INSERT INTO qa_cache
+            (
+                user_id,
+                question,
+                normalized_question,
+                answer,
+                prompt_version,
+                provider,
+                model,
+                created_at,
+                expires_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(
+                user_id,
+                normalized_question,
+                prompt_version,
+                provider,
+                model
+            )
+            DO UPDATE SET
+                question=excluded.question,
+                answer=excluded.answer,
+                created_at=excluded.created_at,
+                expires_at=excluded.expires_at
+            """,
+            (
+                user_id,
+                question,
+                normalized_question,
+                answer,
+                prompt_version or "1",
+                provider or "",
+                model or "",
+                now,
+                expires_at or "",
+            ),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def delete_expired_cached_answers():
     conn = get_connection()
     cursor = conn.cursor()
 
-    now = datetime.now().isoformat()
+    try:
+        now = datetime.now().isoformat()
 
-    cursor.execute(
-        """
-        DELETE FROM qa_cache
-        WHERE expires_at != ''
-        AND expires_at < ?
-        """,
-        (now,),
-    )
+        cursor.execute(
+            """
+            DELETE FROM qa_cache
+            WHERE expires_at != ''
+            AND expires_at < ?
+            """,
+            (now,),
+        )
 
-    deleted = cursor.rowcount
-    conn.commit()
-    conn.close()
+        deleted = cursor.rowcount
 
-    return deleted
+        conn.commit()
+
+        return deleted
+
+    finally:
+        conn.close()
 
 
 def clear_user_cache(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM qa_cache WHERE user_id=?",
-        (user_id,),
-    )
-    conn.commit()
-    conn.close()
+
+    try:
+        cursor.execute(
+            "DELETE FROM qa_cache WHERE user_id=?",
+            (user_id,),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def clear_all_cache():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM qa_cache")
-    conn.commit()
-    conn.close()
+
+    try:
+        cursor.execute(
+            "DELETE FROM qa_cache"
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 # ========================================================
 # Users
 # ========================================================
 
-def add_user(user_id, username="", first_name=""):
+def add_user(
+    user_id,
+    username="",
+    first_name="",
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO users(id, username, first_name)
-        VALUES(?, ?, ?)
-        ON CONFLICT(id)
-        DO UPDATE SET
-            username=excluded.username,
-            first_name=excluded.first_name
-        """,
-        (user_id, username or "", first_name or ""),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO users(
+                id,
+                username,
+                first_name
+            )
+            VALUES(?, ?, ?)
+            ON CONFLICT(id)
+            DO UPDATE SET
+                username=excluded.username,
+                first_name=excluded.first_name
+            """,
+            (
+                user_id,
+                username or "",
+                first_name or "",
+            ),
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def get_all_users():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users ORDER BY id")
-    users = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return users
+
+    try:
+        cursor.execute(
+            "SELECT id FROM users ORDER BY id"
+        )
+
+        return [
+            row[0]
+            for row in cursor.fetchall()
+        ]
+
+    finally:
+        conn.close()
 
 
 def get_all_users_info(limit=20):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            id,
-            username,
-            first_name,
-            plan
-        FROM users
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                username,
+                first_name,
+                plan
+            FROM users
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
 
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+        return cursor.fetchall()
+
+    finally:
+        conn.close()
 
 
 def get_user_info(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            id,
-            username,
-            first_name,
-            nickname,
-            bio,
-            interests,
-            plan
-        FROM users
-        WHERE id=?
-        """,
-        (user_id,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                username,
+                first_name,
+                nickname,
+                bio,
+                interests,
+                plan
+            FROM users
+            WHERE id=?
+            """,
+            (user_id,),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
-    return row
+        return cursor.fetchone()
+
+    finally:
+        conn.close()
 
 
 def get_user_plan(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT plan FROM users WHERE id=?",
-        (user_id,),
-    )
-    row = cursor.fetchone()
-    conn.close()
 
-    return row[0] if row and row[0] else "free"
+    try:
+        cursor.execute(
+            "SELECT plan FROM users WHERE id=?",
+            (user_id,),
+        )
+
+        row = cursor.fetchone()
+
+        return (
+            row[0]
+            if row and row[0]
+            else "free"
+        )
+
+    finally:
+        conn.close()
 
 
-def update_user_plan(user_id, plan):
+def update_user_plan(
+    user_id,
+    plan,
+):
+    normalized_plan = (
+        plan or "free"
+    ).lower().strip()
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE users SET plan=? WHERE id=?",
-        ((plan or "free").lower(), user_id),
-    )
-    conn.commit()
-    conn.close()
+
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET plan=?
+            WHERE id=?
+            """,
+            (
+                normalized_plan,
+                user_id,
+            ),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def get_plan_counts():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT plan, COUNT(*)
-        FROM users
-        GROUP BY plan
-        """
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return {row[0]: row[1] for row in rows}
+
+    try:
+        cursor.execute(
+            """
+            SELECT plan, COUNT(*)
+            FROM users
+            GROUP BY plan
+            """
+        )
+
+        return {
+            row[0]: row[1]
+            for row in cursor.fetchall()
+        }
+
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -1050,34 +1666,36 @@ def get_profile(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            username,
-            first_name,
-            nickname,
-            bio,
-            interests
-        FROM users
-        WHERE id=?
-        """,
-        (user_id,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                username,
+                first_name,
+                nickname,
+                bio,
+                interests
+            FROM users
+            WHERE id=?
+            """,
+            (user_id,),
+        )
 
-    row = cursor.fetchone()
+        row = cursor.fetchone()
 
-    conn.close()
+        if not row:
+            return {}
 
-    if not row:
-        return {}
+        return {
+            "username": row[0],
+            "first_name": row[1],
+            "nickname": row[2],
+            "bio": row[3],
+            "interests": row[4],
+        }
 
-    return {
-        "username": row[0],
-        "first_name": row[1],
-        "nickname": row[2],
-        "bio": row[3],
-        "interests": row[4],
-    }
+    finally:
+        conn.close()
 
 
 def update_profile(
@@ -1089,143 +1707,222 @@ def update_profile(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        UPDATE users
-        SET
-            nickname=COALESCE(?, nickname),
-            bio=COALESCE(?, bio),
-            interests=COALESCE(?, interests)
-        WHERE id=?
-        """,
-        (
-            nickname,
-            bio,
-            interests,
-            user_id,
-        ),
-    )
+    try:
+        cursor.execute(
+            """
+            UPDATE users
+            SET
+                nickname=COALESCE(?, nickname),
+                bio=COALESCE(?, bio),
+                interests=COALESCE(?, interests)
+            WHERE id=?
+            """,
+            (
+                nickname,
+                bio,
+                interests,
+                user_id,
+            ),
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 # ========================================================
 # Messages
 # ========================================================
 
-def save_message(user_id, role, message):
+def save_message(
+    user_id,
+    role,
+    message,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO messages(user_id, role, message)
-        VALUES(?, ?, ?)
-        """,
-        (user_id, role, message),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO messages(
+                user_id,
+                role,
+                message
+            )
+            VALUES(?, ?, ?)
+            """,
+            (
+                user_id,
+                role,
+                message,
+            ),
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
-def get_history(user_id, limit=10):
+def get_history(
+    user_id,
+    limit=10,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT role, message
-        FROM messages
-        WHERE user_id=?
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (user_id, limit),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT role, message
+            FROM messages
+            WHERE user_id=?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (
+                user_id,
+                limit,
+            ),
+        )
 
-    rows = cursor.fetchall()
-    conn.close()
-    return rows[::-1]
+        rows = cursor.fetchall()
+
+        return rows[::-1]
+
+    finally:
+        conn.close()
 
 
 def get_user_message_count(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT COUNT(*) FROM messages WHERE user_id=?",
-        (user_id,),
+
+    try:
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM messages
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
+
+        return cursor.fetchone()[0]
+
+    finally:
+        conn.close()
+
+
+def get_user_message_history(
+    user_id,
+    limit=5,
+):
+    return get_history(
+        user_id,
+        limit,
     )
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
-
-
-def get_user_message_history(user_id, limit=5):
-    return get_history(user_id, limit)
 
 
 def clear_history(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM messages WHERE user_id=?",
-        (user_id,),
-    )
-    conn.commit()
-    conn.close()
+
+    try:
+        cursor.execute(
+            """
+            DELETE FROM messages
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 # ========================================================
 # Memory
 # ========================================================
 
-def save_memory(user_id, key, value):
+def save_memory(
+    user_id,
+    key,
+    value,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO memory(user_id, memory_key, memory_value)
-        VALUES(?, ?, ?)
-        ON CONFLICT(user_id, memory_key)
-        DO UPDATE SET
-            memory_value=excluded.memory_value
-        """,
-        (user_id, key, str(value)),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO memory(
+                user_id,
+                memory_key,
+                memory_value
+            )
+            VALUES(?, ?, ?)
+            ON CONFLICT(
+                user_id,
+                memory_key
+            )
+            DO UPDATE SET
+                memory_value=excluded.memory_value
+            """,
+            (
+                user_id,
+                key,
+                str(value),
+            ),
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def get_memories(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT memory_key, memory_value
-        FROM memory
-        WHERE user_id=?
-        ORDER BY id
-        """,
-        (user_id,),
-    )
-    data = cursor.fetchall()
-    conn.close()
-    return data
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                memory_key,
+                memory_value
+            FROM memory
+            WHERE user_id=?
+            ORDER BY id
+            """,
+            (user_id,),
+        )
+
+        return cursor.fetchall()
+
+    finally:
+        conn.close()
 
 
 def clear_memory(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM memory WHERE user_id=?",
-        (user_id,),
-    )
-    conn.commit()
-    conn.close()
+
+    try:
+        cursor.execute(
+            "DELETE FROM memory WHERE user_id=?",
+            (user_id,),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def clear_user_memory(user_id):
@@ -1240,38 +1937,49 @@ def get_state(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            active_project,
-            current_goal,
-            preferences
-        FROM user_state
-        WHERE user_id=?
-        """,
-        (user_id,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                active_project,
+                current_goal,
+                preferences
+            FROM user_state
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        row = cursor.fetchone()
 
-    if not row:
+        if not row:
+            return {
+                "active_project": "",
+                "current_goal": "",
+                "preferences": {},
+            }
+
+        try:
+            preferences = (
+                json.loads(row[2])
+                if row[2]
+                else {}
+            )
+        except (
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ):
+            preferences = {}
+
         return {
-            "active_project": "",
-            "current_goal": "",
-            "preferences": {},
+            "active_project": row[0] or "",
+            "current_goal": row[1] or "",
+            "preferences": preferences,
         }
 
-    try:
-        preferences = json.loads(row[2]) if row[2] else {}
-    except (TypeError, ValueError):
-        preferences = {}
-
-    return {
-        "active_project": row[0] or "",
-        "current_goal": row[1] or "",
-        "preferences": preferences,
-    }
+    finally:
+        conn.close()
 
 
 def save_state(
@@ -1287,11 +1995,13 @@ def save_state(
         if active_project is not None
         else current["active_project"]
     )
+
     current_goal = (
         current_goal
         if current_goal is not None
         else current["current_goal"]
     )
+
     preferences = (
         preferences
         if preferences is not None
@@ -1301,34 +2011,37 @@ def save_state(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO user_state(
-            user_id,
-            active_project,
-            current_goal,
-            preferences
-        )
-        VALUES(?, ?, ?, ?)
-        ON CONFLICT(user_id)
-        DO UPDATE SET
-            active_project=excluded.active_project,
-            current_goal=excluded.current_goal,
-            preferences=excluded.preferences
-        """,
-        (
-            user_id,
-            active_project or "",
-            current_goal or "",
-            json.dumps(
-                preferences or {},
-                ensure_ascii=False,
+    try:
+        cursor.execute(
+            """
+            INSERT INTO user_state(
+                user_id,
+                active_project,
+                current_goal,
+                preferences
+            )
+            VALUES(?, ?, ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                active_project=excluded.active_project,
+                current_goal=excluded.current_goal,
+                preferences=excluded.preferences
+            """,
+            (
+                user_id,
+                active_project or "",
+                current_goal or "",
+                json.dumps(
+                    preferences or {},
+                    ensure_ascii=False,
+                ),
             ),
-        ),
-    )
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -1344,187 +2057,95 @@ def create_task(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO tasks(
-            user_id,
-            title,
-            description,
-            due_date,
-            completed
-        )
-        VALUES(?, ?, ?, ?, 0)
-        """,
-        (
-            user_id,
-            title,
-            description or "",
-            due_date or "",
-        ),
-    )
-
-    task_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return task_id
-
-
-def get_tasks(user_id, include_completed=False):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    if include_completed:
-        cursor.execute(
+    try:
+        task_id = _insert_and_get_id(
+            conn,
+            cursor,
             """
-            SELECT id, title, description, due_date, completed, created_at
-            FROM tasks
-            WHERE user_id=?
-            ORDER BY id DESC
+            INSERT INTO tasks(
+                user_id,
+                title,
+                description,
+                due_date,
+                completed
+            )
+            VALUES(?, ?, ?, ?, 0)
             """,
-            (user_id,),
-        )
-    else:
-        cursor.execute(
-            """
-            SELECT id, title, description, due_date, completed, created_at
-            FROM tasks
-            WHERE user_id=?
-            AND completed=0
-            ORDER BY id DESC
-            """,
-            (user_id,),
+            (
+                user_id,
+                title,
+                description or "",
+                due_date or "",
+            ),
         )
 
-    rows = cursor.fetchall()
-    conn.close()
+        conn.commit()
 
-    return [
-        {
-            "id": row[0],
-            "title": row[1],
-            "description": row[2],
-            "due_date": row[3],
-            "completed": bool(row[4]),
-            "created_at": row[5],
-        }
-        for row in rows
-    ]
+        return task_id
+
+    finally:
+        conn.close()
 
 
-# ========================================================
-# Usage Compatibility
-# ========================================================
-
-def _usage_column(field):
-    mapping = {
-        "messages": "messages",
-        "images": "images",
-        "code_requests": "code_requests",
-        "searches": "searches",
-    }
-    if field not in mapping:
-        raise ValueError(f"Unknown usage field: {field}")
-    return mapping[field]
-
-
-def add_usage(user_id, field="messages"):
-    column = _usage_column(field)
-    today = datetime.now().date().isoformat()
-
+def get_tasks(
+    user_id,
+    include_completed=False,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO usage(
-            user_id,
-            date,
-            messages,
-            images,
-            code_requests,
-            searches
-        )
-        VALUES(?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, date)
-        DO UPDATE SET
-            messages=usage.messages + excluded.messages,
-            images=usage.images + excluded.images,
-            code_requests=usage.code_requests + excluded.code_requests,
-            searches=usage.searches + excluded.searches
-        """,
-        (
-            user_id,
-            today,
-            1 if column == "messages" else 0,
-            1 if column == "images" else 0,
-            1 if column == "code_requests" else 0,
-            1 if column == "searches" else 0,
-        ),
-    )
+    try:
+        if include_completed:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    title,
+                    description,
+                    due_date,
+                    completed,
+                    created_at
+                FROM tasks
+                WHERE user_id=?
+                ORDER BY id DESC
+                """,
+                (user_id,),
+            )
 
-    conn.commit()
-    conn.close()
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    title,
+                    description,
+                    due_date,
+                    completed,
+                    created_at
+                FROM tasks
+                WHERE user_id=?
+                AND completed=0
+                ORDER BY id DESC
+                """,
+                (user_id,),
+            )
 
+        rows = cursor.fetchall()
 
-def get_today_usage(user_id):
-    today = datetime.now().date().isoformat()
+        return [
+            {
+                "id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "due_date": row[3],
+                "completed": bool(row[4]),
+                "created_at": row[5],
+            }
+            for row in rows
+        ]
 
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT messages
-        FROM usage
-        WHERE user_id=?
-        AND date=?
-        """,
-        (user_id, today),
-    )
-
-    row = cursor.fetchone()
-    conn.close()
-
-    return row[0] if row else 0
-
-
-def get_today_usage_all(user_id):
-    today = datetime.now().date().isoformat()
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT
-            messages,
-            images,
-            code_requests,
-            searches
-        FROM usage
-        WHERE user_id=?
-        AND date=?
-        """,
-        (user_id, today),
-    )
-
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        return {
-            "messages": 0,
-            "images": 0,
-            "code_requests": 0,
-            "searches": 0,
-        }
-
-    return {
-        "messages": row[0],
-        "images": row[1],
-        "code_requests": row[2],
-        "searches": row[3],
-    }
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -1537,110 +2158,131 @@ def set_plan_price(
     duration_days=30,
     currency="IRR",
 ):
-    normalized_price = _parse_price_value(price)
+    normalized_price = _parse_price_value(
+        price
+    )
 
     if normalized_price is None:
-        raise ValueError("price could not be parsed")
-
-    plan_name = (plan_name or "").lower().strip()
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO plan_prices(
-            plan_name,
-            duration_days,
-            price,
-            currency,
-            is_active
+        raise ValueError(
+            "price could not be parsed"
         )
-        VALUES(?, ?, ?, ?, 1)
-        ON CONFLICT(plan_name)
-        DO UPDATE SET
-            duration_days=excluded.duration_days,
-            price=excluded.price,
-            currency=excluded.currency,
-            is_active=1
-        """,
-        (
-            plan_name,
-            duration_days,
-            normalized_price,
-            currency,
-        ),
-    )
 
-    conn.commit()
-    conn.close()
+    plan_name = (
+        plan_name or ""
+    ).lower().strip()
 
-    return normalized_price
-
-
-def get_plan_price(plan_name, duration_days=30):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT price, currency, is_active
-        FROM plan_prices
-        WHERE plan_name=?
-        AND duration_days=?
-        """,
-        (
-            (plan_name or "").lower(),
-            duration_days,
-        ),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO plan_prices(
+                plan_name,
+                duration_days,
+                price,
+                currency,
+                is_active
+            )
+            VALUES(?, ?, ?, ?, 1)
+            ON CONFLICT(plan_name)
+            DO UPDATE SET
+                duration_days=excluded.duration_days,
+                price=excluded.price,
+                currency=excluded.currency,
+                is_active=1
+            """,
+            (
+                plan_name,
+                duration_days,
+                normalized_price,
+                currency,
+            ),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        conn.commit()
 
-    if not row:
+        return normalized_price
+
+    finally:
+        conn.close()
+
+
+def get_plan_price(
+    plan_name,
+    duration_days=30,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                price,
+                currency,
+                is_active
+            FROM plan_prices
+            WHERE plan_name=?
+            AND duration_days=?
+            """,
+            (
+                (plan_name or "").lower(),
+                duration_days,
+            ),
+        )
+
+        row = cursor.fetchone()
+
+        if not row:
+            return {
+                "price": 0,
+                "currency": "IRR",
+                "is_active": True,
+            }
+
         return {
-            "price": 0,
-            "currency": "IRR",
-            "is_active": True,
+            "price": row[0],
+            "currency": row[1] or "IRR",
+            "is_active": bool(row[2]),
         }
 
-    return {
-        "price": row[0],
-        "currency": row[1] or "IRR",
-        "is_active": bool(row[2]),
-    }
+    finally:
+        conn.close()
 
 
 def get_plan_prices():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            plan_name,
-            duration_days,
-            price,
-            currency,
-            is_active
-        FROM plan_prices
-        ORDER BY plan_name
-        """
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                plan_name,
+                duration_days,
+                price,
+                currency,
+                is_active
+            FROM plan_prices
+            ORDER BY plan_name
+            """
+        )
 
-    rows = cursor.fetchall()
-    conn.close()
+        rows = cursor.fetchall()
 
-    return {
-        row[0]: {
-            "duration_days": row[1],
-            "price": row[2],
-            "currency": row[3] or "IRR",
-            "is_active": bool(row[4]),
+        return {
+            row[0]: {
+                "duration_days": row[1],
+                "price": row[2],
+                "currency": row[3] or "IRR",
+                "is_active": bool(row[4]),
+            }
+            for row in rows
         }
-        for row in rows
-    }
+
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -1657,79 +2299,229 @@ def create_payment_request(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO payment_requests(
-            user_id,
-            plan_name,
-            duration_days,
-            amount,
-            currency,
-            gateway,
-            gateway_reference,
-            status,
-            created_at
+    try:
+        request_id = _insert_and_get_id(
+            conn,
+            cursor,
+            """
+            INSERT INTO payment_requests(
+                user_id,
+                plan_name,
+                duration_days,
+                amount,
+                currency,
+                gateway,
+                gateway_reference,
+                status,
+                created_at
+            )
+            VALUES(
+                ?, ?, ?, ?, ?,
+                'placeholder',
+                '',
+                'pending',
+                ?
+            )
+            """,
+            (
+                user_id,
+                (plan_name or "").lower(),
+                duration_days,
+                amount,
+                currency,
+                datetime.now().isoformat(),
+            ),
         )
-        VALUES(?, ?, ?, ?, ?, 'placeholder', '', 'pending', ?)
-        """,
-        (
-            user_id,
-            (plan_name or "").lower(),
-            duration_days,
-            amount,
-            currency,
-            datetime.now().isoformat(),
-        ),
-    )
 
-    request_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+        conn.commit()
 
-    return request_id
+        return request_id
+
+    finally:
+        conn.close()
 
 
-def get_payment_request(request_id):
+def get_pending_payment(
+    user_id,
+    plan_name,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            id,
-            user_id,
-            plan_name,
-            duration_days,
-            amount,
-            currency,
-            gateway,
-            gateway_reference,
-            status,
-            created_at
-        FROM payment_requests
-        WHERE id=?
-        """,
-        (request_id,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                plan_name,
+                duration_days,
+                amount,
+                currency,
+                gateway,
+                gateway_reference,
+                status,
+                created_at
+            FROM payment_requests
+            WHERE user_id=?
+            AND plan_name=?
+            AND status='pending'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                user_id,
+                (plan_name or "").lower(),
+            ),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        row = cursor.fetchone()
 
-    if not row:
-        return None
+        if not row:
+            return None
 
-    return {
-        "id": row[0],
-        "user_id": row[1],
-        "plan_name": row[2],
-        "duration_days": row[3],
-        "amount": row[4],
-        "currency": row[5],
-        "gateway": row[6],
-        "gateway_reference": row[7],
-        "status": row[8],
-        "created_at": row[9],
-    }
+        return {
+            "id": row[0],
+            "user_id": row[1],
+            "plan_name": row[2],
+            "duration_days": row[3],
+            "amount": row[4],
+            "currency": row[5],
+            "gateway": row[6],
+            "gateway_reference": row[7],
+            "status": row[8],
+            "created_at": row[9],
+        }
+
+    finally:
+        conn.close()
+
+
+def update_payment_gateway(
+    payment_id,
+    authority,
+    payment_url,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            UPDATE payment_requests
+            SET
+                gateway_reference=?,
+                gateway=?
+            WHERE id=?
+            """,
+            (
+                authority,
+                payment_url,
+                payment_id,
+            ),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+def get_payment_request(
+    request_id,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                plan_name,
+                duration_days,
+                amount,
+                currency,
+                gateway,
+                gateway_reference,
+                status,
+                created_at
+            FROM payment_requests
+            WHERE id=?
+            """,
+            (request_id,),
+        )
+
+        row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "user_id": row[1],
+            "plan_name": row[2],
+            "duration_days": row[3],
+            "amount": row[4],
+            "currency": row[5],
+            "gateway": row[6],
+            "gateway_reference": row[7],
+            "status": row[8],
+            "created_at": row[9],
+        }
+
+    finally:
+        conn.close()
+
+
+def get_all_payment_requests(
+    limit=20,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                user_id,
+                plan_name,
+                duration_days,
+                amount,
+                currency,
+                gateway,
+                gateway_reference,
+                status,
+                created_at
+            FROM payment_requests
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+
+        rows = cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "user_id": row[1],
+                "plan_name": row[2],
+                "duration_days": row[3],
+                "amount": row[4],
+                "currency": row[5],
+                "gateway": row[6],
+                "gateway_reference": row[7],
+                "status": row[8],
+                "created_at": row[9],
+            }
+            for row in rows
+        ]
+
+    finally:
+        conn.close()
 
 
 def update_payment_request_status(
@@ -1740,23 +2532,26 @@ def update_payment_request_status(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        UPDATE payment_requests
-        SET
-            status=?,
-            gateway_reference=?
-        WHERE id=?
-        """,
-        (
-            status,
-            gateway_reference,
-            request_id,
-        ),
-    )
+    try:
+        cursor.execute(
+            """
+            UPDATE payment_requests
+            SET
+                status=?,
+                gateway_reference=?
+            WHERE id=?
+            """,
+            (
+                status,
+                gateway_reference,
+                request_id,
+            ),
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -1767,32 +2562,35 @@ def get_referral_settings():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            required_invites,
-            reward_days,
-            reward_plan
-        FROM referral_settings
-        WHERE id=1
-        """
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                required_invites,
+                reward_days,
+                reward_plan
+            FROM referral_settings
+            WHERE id=1
+            """
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        row = cursor.fetchone()
 
-    if not row:
+        if not row:
+            return {
+                "required_invites": 3,
+                "reward_days": 3,
+                "reward_plan": "pro",
+            }
+
         return {
-            "required_invites": 3,
-            "reward_days": 3,
-            "reward_plan": "pro",
+            "required_invites": row[0] or 3,
+            "reward_days": row[1] or 3,
+            "reward_plan": row[2] or "pro",
         }
 
-    return {
-        "required_invites": row[0] or 3,
-        "reward_days": row[1] or 3,
-        "reward_plan": row[2] or "pro",
-    }
+    finally:
+        conn.close()
 
 
 def set_referral_settings(
@@ -1814,282 +2612,523 @@ def set_referral_settings(
             else current["reward_days"]
         ),
         "reward_plan": (
-            (reward_plan or current["reward_plan"]).lower()
+            (
+                reward_plan
+                or current["reward_plan"]
+            ).lower()
         ),
     }
+
+    if values["required_invites"] <= 0:
+        raise ValueError(
+            "required_invites must be greater than zero"
+        )
+
+    if values["reward_days"] <= 0:
+        raise ValueError(
+            "reward_days must be greater than zero"
+        )
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO referral_settings(
-            id,
-            required_invites,
-            reward_days,
-            reward_plan
+    try:
+        cursor.execute(
+            """
+            INSERT INTO referral_settings(
+                id,
+                required_invites,
+                reward_days,
+                reward_plan
+            )
+            VALUES(1, ?, ?, ?)
+            ON CONFLICT(id)
+            DO UPDATE SET
+                required_invites=excluded.required_invites,
+                reward_days=excluded.reward_days,
+                reward_plan=excluded.reward_plan
+            """,
+            (
+                values["required_invites"],
+                values["reward_days"],
+                values["reward_plan"],
+            ),
         )
-        VALUES(1, ?, ?, ?)
-        ON CONFLICT(id)
-        DO UPDATE SET
-            required_invites=excluded.required_invites,
-            reward_days=excluded.reward_days,
-            reward_plan=excluded.reward_plan
-        """,
-        (
-            values["required_invites"],
-            values["reward_days"],
-            values["reward_plan"],
-        ),
-    )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
-def get_referral_link(user_id):
-    username = (BOT_USERNAME or "").strip()
+def get_referral_message_template():
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    if username:
-        return f"https://t.me/{username}?start=ref_{user_id}"
+    try:
+        cursor.execute(
+            """
+            SELECT message_template
+            FROM referral_content
+            WHERE id=1
+            """
+        )
+
+        row = cursor.fetchone()
+
+        if row and row[0]:
+            return row[0]
+
+        return (
+            "👥 دعوت از دوستان 🎁\n\n"
+            "🔗 لینک اختصاصی شما:\n{link}\n\n"
+            "🎁 با هر {required_invites} دعوت موفق، "
+            "{reward_days} روز پلن {reward_plan} هدیه می‌گیری!\n\n"
+            "📌 دوستت فقط باید از لینک بالا وارد ربات بشه.\n\n"
+            "❤️ ممنون که PFAST_AI رو به دوستات معرفی می‌کنی."
+        )
+
+    finally:
+        conn.close()
+
+
+def set_referral_message_template(
+    template,
+):
+    template = str(
+        template or ""
+    ).strip()
+
+    if not template:
+        raise ValueError(
+            "template cannot be empty"
+        )
+
+    allowed = {
+        "link",
+        "required_invites",
+        "reward_days",
+        "reward_plan",
+    }
+
+    import string
+
+    formatter = string.Formatter()
+
+    for (
+        _,
+        field_name,
+        _,
+        _,
+    ) in formatter.parse(template):
+        if field_name is None:
+            continue
+
+        if field_name not in allowed:
+            raise ValueError(
+                "unsupported referral "
+                f"placeholder: {field_name}"
+            )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            INSERT INTO referral_content(
+                id,
+                message_template
+            )
+            VALUES(1, ?)
+            ON CONFLICT(id)
+            DO UPDATE SET
+                message_template=excluded.message_template
+            """,
+            (template,),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+def get_referral_link(
+    user_id,
+    bot_username=None,
+):
+    username = (
+        bot_username
+        or BOT_USERNAME
+        or ""
+    ).strip().lstrip("@")
+
+    if not username:
+        return None
 
     return (
-        "https://t.me/"
-        "your_bot_username"
+        f"https://t.me/{username}"
         f"?start=ref_{user_id}"
     )
 
 
-def create_referral(inviter_id, invited_id):
+def create_referral(
+    inviter_id,
+    invited_id,
+):
+    inviter_id = int(
+        inviter_id
+    )
+
+    invited_id = int(
+        invited_id
+    )
+
+    if inviter_id <= 0:
+        return None
+
+    if invited_id <= 0:
+        return None
+
     if inviter_id == invited_id:
         return None
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT 1
-        FROM referrals
-        WHERE inviter_id=?
-        AND invited_id=?
-        """,
-        (
-            inviter_id,
-            invited_id,
-        ),
-    )
-
-    if cursor.fetchone():
-        conn.close()
-        return None
-
-    cursor.execute(
-        """
-        INSERT INTO referrals(
-            inviter_id,
-            invited_id,
-            reward_given,
-            created_at
+    try:
+        # The invited user can only belong to one
+        # successful referral relationship.
+        cursor.execute(
+            """
+            SELECT inviter_id
+            FROM referrals
+            WHERE invited_id=?
+            LIMIT 1
+            """,
+            (
+                invited_id,
+            ),
         )
-        VALUES(?, ?, 0, ?)
-        """,
-        (
-            inviter_id,
-            invited_id,
-            datetime.now().isoformat(),
-        ),
+
+        existing = cursor.fetchone()
+
+        if existing:
+            return None
+
+        cursor.execute(
+            """
+            INSERT INTO referrals(
+                inviter_id,
+                invited_id,
+                reward_given,
+                created_at
+            )
+            VALUES(?, ?, 0, ?)
+            """,
+            (
+                inviter_id,
+                invited_id,
+                datetime.now().isoformat(),
+            ),
+        )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+    maybe_grant_referral_reward(
+        inviter_id
     )
 
-    conn.commit()
-    conn.close()
-
-    maybe_grant_referral_reward(inviter_id)
     return True
 
 
-def maybe_grant_referral_reward(inviter_id):
+def maybe_grant_referral_reward(
+    inviter_id,
+):
     settings = get_referral_settings()
+
+    required = int(
+        settings["required_invites"]
+    )
+
+    if required <= 0:
+        return False
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            COUNT(*),
-            COALESCE(
-                SUM(
-                    CASE
-                        WHEN reward_given=1 THEN 1
-                        ELSE 0
-                    END
-                ),
-                0
-            )
-        FROM referrals
-        WHERE inviter_id=?
-        """,
-        (inviter_id,),
+    try:
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*),
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN reward_given=1
+                            THEN 1
+                            ELSE 0
+                        END
+                    ),
+                    0
+                )
+            FROM referrals
+            WHERE inviter_id=?
+            """,
+            (inviter_id,),
+        )
+
+        total, rewarded = cursor.fetchone()
+
+        total = int(total or 0)
+        rewarded = int(rewarded or 0)
+
+        # Number of rewards the user has earned
+        # according to the referral threshold.
+        eligible_rewards = (
+            total // required
+        )
+
+        if eligible_rewards <= rewarded:
+            return False
+
+        reward_batch = rewarded + 1
+
+        cursor.execute(
+            """
+            SELECT id
+            FROM referrals
+            WHERE inviter_id=?
+            AND reward_given=0
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (
+                inviter_id,
+                required,
+            ),
+        )
+
+        reward_rows = cursor.fetchall()
+
+        if len(reward_rows) < required:
+            return False
+
+        referral_ids = [
+            row[0]
+            for row in reward_rows
+        ]
+
+        placeholders = ", ".join(
+            ["?"] * len(referral_ids)
+        )
+
+        cursor.execute(
+            f"""
+            UPDATE referrals
+            SET
+                reward_given=1,
+                reward_batch=?
+            WHERE id IN ({placeholders})
+            """,
+            (
+                reward_batch,
+                *referral_ids,
+            ),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+    from services.billing.subscription_service import (
+        grant_temporary_subscription,
     )
 
-    total, rewarded = cursor.fetchone()
-    conn.close()
-
-    if (
-        total < settings["required_invites"]
-        or rewarded > 0
-    ):
-        return False
-
-    create_subscription(
+    grant_temporary_subscription(
         inviter_id,
         settings["reward_plan"],
         settings["reward_days"],
     )
-    update_user_plan(
-        inviter_id,
-        settings["reward_plan"],
-    )
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE referrals
-        SET reward_given=1
-        WHERE inviter_id=?
-        AND reward_given=0
-        """,
-        (inviter_id,),
-    )
-
-    conn.commit()
-    conn.close()
 
     return True
 
 
-def get_user_referral_stats(user_id):
+def get_user_referral_stats(
+    user_id,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            COUNT(*),
-            COALESCE(
-                SUM(
-                    CASE
-                        WHEN reward_given=1 THEN 1
-                        ELSE 0
-                    END
+    try:
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*),
+                COALESCE(
+                    SUM(
+                        CASE
+                            WHEN reward_given=1
+                            THEN 1
+                            ELSE 0
+                        END
+                    ),
+                    0
                 ),
-                0
-            )
-        FROM referrals
-        WHERE inviter_id=?
-        """,
-        (user_id,),
-    )
+                COALESCE(
+                    MAX(reward_batch),
+                    0
+                )
+            FROM referrals
+            WHERE inviter_id=?
+            """,
+            (user_id,),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        row = cursor.fetchone()
 
-    if not row:
+        if not row:
+            return {
+                "invites": 0,
+                "rewarded": 0,
+                "rewards": 0,
+            }
+
+        rewarded_invites = int(
+            row[1] or 0
+        )
+
+        reward_count = int(
+            row[2] or 0
+        )
+
         return {
-            "invites": 0,
-            "rewarded": 0,
+            "invites": int(row[0] or 0),
+            "rewarded": rewarded_invites,
+            "rewards": reward_count,
         }
 
-    return {
-        "invites": row[0] or 0,
-        "rewarded": row[1] or 0,
-    }
+    finally:
+        conn.close()
 
 
 # ========================================================
 # Ban System
 # ========================================================
 
-def ban_user(user_id, reason=""):
+def ban_user(
+    user_id,
+    reason="",
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO banned_users(
-            user_id,
-            reason,
-            banned_at
+    try:
+        cursor.execute(
+            """
+            INSERT INTO banned_users(
+                user_id,
+                reason,
+                banned_at
+            )
+            VALUES(?, ?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                reason=excluded.reason,
+                banned_at=excluded.banned_at
+            """,
+            (
+                user_id,
+                reason or "",
+                datetime.now().isoformat(),
+            ),
         )
-        VALUES(?, ?, ?)
-        ON CONFLICT(user_id)
-        DO UPDATE SET
-            reason=excluded.reason,
-            banned_at=excluded.banned_at
-        """,
-        (
-            user_id,
-            reason or "",
-            datetime.now().isoformat(),
-        ),
-    )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def unban_user(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM banned_users WHERE user_id=?",
-        (user_id,),
-    )
-    conn.commit()
-    conn.close()
+
+    try:
+        cursor.execute(
+            "DELETE FROM banned_users WHERE user_id=?",
+            (user_id,),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def is_user_banned(user_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT 1 FROM banned_users WHERE user_id=?",
-        (user_id,),
-    )
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
+
+    try:
+        cursor.execute(
+            """
+            SELECT 1
+            FROM banned_users
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
+
+        return (
+            cursor.fetchone()
+            is not None
+        )
+
+    finally:
+        conn.close()
 
 
 def get_ban_reason(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT reason, banned_at
-        FROM banned_users
-        WHERE user_id=?
-        """,
-        (user_id,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT
+                reason,
+                banned_at
+            FROM banned_users
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        row = cursor.fetchone()
 
-    if row:
+        if row:
+            return {
+                "reason": row[0] or "",
+                "banned_at": row[1] or "",
+            }
+
         return {
-            "reason": row[0] or "",
-            "banned_at": row[1] or "",
+            "reason": "",
+            "banned_at": "",
         }
 
-    return {
-        "reason": "",
-        "banned_at": "",
-    }
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -2099,118 +3138,297 @@ def get_ban_reason(user_id):
 def get_total_messages():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM messages")
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+
+    try:
+        cursor.execute(
+            "SELECT COUNT(*) FROM messages"
+        )
+
+        return cursor.fetchone()[0]
+
+    finally:
+        conn.close()
 
 
 def get_total_memories():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM memory")
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+
+    try:
+        cursor.execute(
+            "SELECT COUNT(*) FROM memory"
+        )
+
+        return cursor.fetchone()[0]
+
+    finally:
+        conn.close()
 
 
 def get_total_cached_questions():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM qa_cache")
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+
+    try:
+        cursor.execute(
+            "SELECT COUNT(*) FROM qa_cache"
+        )
+
+        return cursor.fetchone()[0]
+
+    finally:
+        conn.close()
 
 
 def get_active_subscription_count():
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT COUNT(*)
-        FROM subscriptions
-        WHERE status='active'
-        """
-    )
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
+
+    try:
+        _expire_subscriptions(
+            conn,
+            cursor,
+        )
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM subscriptions
+            WHERE status='active'
+            """
+        )
+
+        count = cursor.fetchone()[0]
+
+        conn.commit()
+
+        return count
+
+    finally:
+        conn.close()
 
 
 # ========================================================
 # Subscriptions
 # ========================================================
 
-def create_subscription(user_id, plan, days):
-    today = datetime.now().date().isoformat()
+def _calculate_expiration(
+    start_date,
+    days,
+):
+    try:
+        start = datetime.fromisoformat(
+            str(start_date)
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        start = datetime.now()
+
+    return (
+        start + timedelta(
+            days=int(days)
+        )
+    ).isoformat()
+
+
+def _expire_subscriptions(
+    conn,
+    cursor,
+):
+    now = datetime.now().isoformat()
+
+    cursor.execute(
+        """
+        SELECT
+            user_id,
+            plan
+        FROM subscriptions
+        WHERE status='active'
+        AND expires_at != ''
+        AND expires_at <= ?
+        """,
+        (now,),
+    )
+
+    expired = cursor.fetchall()
+
+    for user_id, plan in expired:
+        cursor.execute(
+            """
+            UPDATE subscriptions
+            SET status='expired'
+            WHERE user_id=?
+            AND status='active'
+            """,
+            (user_id,),
+        )
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET plan='free'
+            WHERE id=?
+            AND plan=?
+            """,
+            (
+                user_id,
+                plan,
+            ),
+        )
+
+
+def create_subscription(
+    user_id,
+    plan,
+    days,
+):
+    normalized_plan = (
+        plan or "free"
+    ).lower().strip()
+
+    days = int(days)
+
+    if days < 0:
+        raise ValueError(
+            "subscription days cannot be negative"
+        )
+
+    today = datetime.now()
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO subscriptions(
-            user_id,
-            plan,
-            start_date,
-            duration_days,
-            status
+    try:
+        cursor.execute(
+            """
+            SELECT
+                plan,
+                expires_at,
+                status
+            FROM subscriptions
+            WHERE user_id=?
+            """,
+            (user_id,),
         )
-        VALUES(?, ?, ?, ?, 'active')
-        ON CONFLICT(user_id)
-        DO UPDATE SET
-            plan=excluded.plan,
-            start_date=excluded.start_date,
-            duration_days=excluded.duration_days,
-            status=excluded.status
-        """,
-        (
-            user_id,
-            (plan or "free").lower(),
-            today,
-            days,
-        ),
-    )
 
-    conn.commit()
-    conn.close()
+        current = cursor.fetchone()
+
+        now = today
+
+        if (
+            current
+            and current[1]
+            and current[2] == "active"
+        ):
+            try:
+                current_expiration = (
+                    datetime.fromisoformat(
+                        str(current[1])
+                    )
+                )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                current_expiration = now
+
+            base_date = max(
+                now,
+                current_expiration,
+            )
+
+        else:
+            base_date = now
+
+        expires_at = (
+            base_date
+            + timedelta(days=days)
+        ).isoformat()
+
+        cursor.execute(
+            """
+            INSERT INTO subscriptions(
+                user_id,
+                plan,
+                start_date,
+                duration_days,
+                expires_at,
+                status
+            )
+            VALUES(?, ?, ?, ?, ?, 'active')
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                plan=excluded.plan,
+                start_date=excluded.start_date,
+                duration_days=excluded.duration_days,
+                expires_at=excluded.expires_at,
+                status=excluded.status
+            """,
+            (
+                user_id,
+                normalized_plan,
+                today.date().isoformat(),
+                days,
+                expires_at,
+            ),
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 def get_subscription(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            plan,
-            start_date,
-            duration_days,
-            status
-        FROM subscriptions
-        WHERE user_id=?
-        """,
-        (user_id,),
-    )
+    try:
+        _expire_subscriptions(
+            conn,
+            cursor,
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        cursor.execute(
+            """
+            SELECT
+                plan,
+                start_date,
+                duration_days,
+                expires_at,
+                status
+            FROM subscriptions
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
 
-    if not row:
+        row = cursor.fetchone()
+
+        conn.commit()
+
+        if not row:
+            return {
+                "plan": "free",
+                "start_date": "",
+                "duration_days": 0,
+                "expires_at": "",
+                "status": "inactive",
+            }
+
         return {
-            "plan": "free",
-            "start_date": "",
-            "duration_days": 0,
-            "status": "inactive",
+            "plan": row[0] or "free",
+            "start_date": row[1] or "",
+            "duration_days": row[2] or 0,
+            "expires_at": row[3] or "",
+            "status": row[4] or "inactive",
         }
 
-    return {
-        "plan": row[0],
-        "start_date": row[1],
-        "duration_days": row[2],
-        "status": row[3],
-    }
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -2221,41 +3439,53 @@ def get_last_request(user_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT last_request
-        FROM rate_limit
-        WHERE user_id=?
-        """,
-        (user_id,),
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT last_request
+            FROM rate_limit
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
 
-    row = cursor.fetchone()
-    conn.close()
+        row = cursor.fetchone()
 
-    return row[0] if row else 0
+        return row[0] if row else 0
+
+    finally:
+        conn.close()
 
 
-def update_last_request(user_id, timestamp):
+def update_last_request(
+    user_id,
+    timestamp,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO rate_limit(user_id, last_request)
-        VALUES(?, ?)
-        ON CONFLICT(user_id)
-        DO UPDATE SET
-            last_request=excluded.last_request
-        """,
-        (
-            user_id,
-            timestamp,
-        ),
-    )
+    try:
+        cursor.execute(
+            """
+            INSERT INTO rate_limit(
+                user_id,
+                last_request
+            )
+            VALUES(?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                last_request=excluded.last_request
+            """,
+            (
+                user_id,
+                timestamp,
+            ),
+        )
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
 # ========================================================
@@ -2266,28 +3496,44 @@ broadcast_messages = {}
 admin_actions = {}
 
 
-def set_broadcast_message(user_id, value=True):
+def set_broadcast_message(
+    user_id,
+    value=True,
+):
     broadcast_messages[user_id] = value
 
 
 def get_broadcast_message(user_id):
-    return broadcast_messages.get(user_id)
+    return broadcast_messages.get(
+        user_id
+    )
 
 
 def clear_broadcast_message(user_id):
-    broadcast_messages.pop(user_id, None)
+    broadcast_messages.pop(
+        user_id,
+        None,
+    )
 
 
-def set_admin_action(user_id, action):
+def set_admin_action(
+    user_id,
+    action,
+):
     admin_actions[user_id] = action
 
 
 def get_admin_action(user_id):
-    return admin_actions.get(user_id)
+    return admin_actions.get(
+        user_id
+    )
 
 
 def clear_admin_action(user_id):
-    admin_actions.pop(user_id, None)
+    admin_actions.pop(
+        user_id,
+        None,
+    )
 
 
 # ========================================================
@@ -2305,19 +3551,29 @@ def _safe_copy_rows(
     target_cursor = target_conn.cursor()
 
     source_cursor.execute(
-        f"SELECT {', '.join(columns)} FROM {table}"
+        f"""
+        SELECT {', '.join(columns)}
+        FROM {table}
+        """
     )
 
     rows = source_cursor.fetchall()
+
     if not rows:
         return 0
 
-    placeholders = ", ".join(["?"] * len(columns))
+    placeholders = ", ".join(
+        ["?"] * len(columns)
+    )
 
     copied = 0
 
     for row in rows:
-        values = transform(row) if transform else row
+        values = (
+            transform(row)
+            if transform
+            else row
+        )
 
         try:
             target_cursor.execute(
@@ -2328,7 +3584,9 @@ def _safe_copy_rows(
                 """,
                 values,
             )
+
             copied += 1
+
         except sqlite3.IntegrityError:
             continue
 
@@ -2338,22 +3596,37 @@ def _safe_copy_rows(
 def rebuild_database():
     if DATABASE_URL:
         raise RuntimeError(
-            "rebuild_database() is only for the local SQLite database."
+            "rebuild_database() is only for "
+            "the local SQLite database."
         )
 
     if not os.path.exists(DB_NAME):
-        raise FileNotFoundError(DB_NAME)
+        raise FileNotFoundError(
+            DB_NAME
+        )
 
-    init_target = DB_NAME + ".rebuild"
+    init_target = (
+        DB_NAME + ".rebuild"
+    )
 
     if os.path.exists(init_target):
         os.remove(init_target)
 
-    original_db = sqlite3.connect(DB_NAME)
-    original_db.execute("PRAGMA foreign_keys = OFF")
+    original_db = sqlite3.connect(
+        DB_NAME
+    )
 
-    new_db = sqlite3.connect(init_target)
-    new_db.execute("PRAGMA foreign_keys = ON")
+    original_db.execute(
+        "PRAGMA foreign_keys = OFF"
+    )
+
+    new_db = sqlite3.connect(
+        init_target
+    )
+
+    new_db.execute(
+        "PRAGMA foreign_keys = ON"
+    )
 
     for statement in SQLITE_SCHEMA:
         new_db.execute(statement)
@@ -2361,9 +3634,20 @@ def rebuild_database():
     for statement in INDEXES:
         new_db.execute(statement)
 
-    # Seed defaults first so FK-dependent copies are valid.
-    _seed_defaults(new_db.cursor())
+    _ensure_schema_compatibility(
+        new_db,
+        new_db.cursor(),
+    )
+
+    _seed_defaults(
+        new_db.cursor()
+    )
+
     new_db.commit()
+
+    # ----------------------------------------------------
+    # Users
+    # ----------------------------------------------------
 
     users = _safe_copy_rows(
         original_db,
@@ -2391,16 +3675,23 @@ def rebuild_database():
 
     valid_user_ids = {
         row[0]
-        for row in new_db.execute("SELECT id FROM users").fetchall()
+        for row in new_db.execute(
+            "SELECT id FROM users"
+        ).fetchall()
     }
 
-    def valid_user(row):
-        return row[1] in valid_user_ids
-
+    # ----------------------------------------------------
     # Messages
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
-        SELECT id, user_id, role, message
+        SELECT
+            id,
+            user_id,
+            role,
+            message,
+            created_at
         FROM messages
         """
     ):
@@ -2413,22 +3704,35 @@ def rebuild_database():
                 id,
                 user_id,
                 role,
-                message
+                message,
+                created_at
             )
-            VALUES(?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?)
             """,
             (
                 row[0],
                 row[1],
                 row[2] or "",
                 row[3] or "",
+                row[4]
+                or datetime.now().isoformat(),
             ),
         )
 
+    # ----------------------------------------------------
     # Tasks
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
-        SELECT id, user_id, title, description, due_date, completed, created_at
+        SELECT
+            id,
+            user_id,
+            title,
+            description,
+            due_date,
+            completed,
+            created_at
         FROM tasks
         """
     ):
@@ -2455,14 +3759,22 @@ def rebuild_database():
                 row[3] or "",
                 row[4] or "",
                 1 if row[5] else 0,
-                row[6] or datetime.now().isoformat(),
+                row[6]
+                or datetime.now().isoformat(),
             ),
         )
 
+    # ----------------------------------------------------
     # Memory
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
-        SELECT id, user_id, memory_key, memory_value
+        SELECT
+            id,
+            user_id,
+            memory_key,
+            memory_value
         FROM memory
         """
     ):
@@ -2487,7 +3799,10 @@ def rebuild_database():
             ),
         )
 
+    # ----------------------------------------------------
     # Cache
+    # ----------------------------------------------------
+
     old_cache_columns = {
         row[1]
         for row in original_db.execute(
@@ -2510,12 +3825,18 @@ def rebuild_database():
         ("created_at", ""),
         ("expires_at", ""),
     ):
-        cache_select.append(
-            column if column in old_cache_columns else f"'{default}' AS {column}"
-        )
+        if column in old_cache_columns:
+            cache_select.append(column)
+        else:
+            cache_select.append(
+                f"'{default}' AS {column}"
+            )
 
     for row in original_db.execute(
-        f"SELECT {', '.join(cache_select)} FROM qa_cache"
+        f"""
+        SELECT {', '.join(cache_select)}
+        FROM qa_cache
+        """
     ):
         if row[1] not in valid_user_ids:
             continue
@@ -2540,20 +3861,29 @@ def rebuild_database():
                 row[0],
                 row[1],
                 row[2] or "",
-                row[3] or normalize_text(row[2]),
+                row[3]
+                or normalize_text(row[2]),
                 row[4] or "",
                 row[5] or "1",
                 row[6] or "",
                 row[7] or "",
-                row[8] or datetime.now().isoformat(),
+                row[8]
+                or datetime.now().isoformat(),
                 row[9] or "",
             ),
         )
 
-    # User state
+    # ----------------------------------------------------
+    # User State
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
-        SELECT user_id, active_project, current_goal, preferences
+        SELECT
+            user_id,
+            active_project,
+            current_goal,
+            preferences
         FROM user_state
         """
     ):
@@ -2578,7 +3908,10 @@ def rebuild_database():
             ),
         )
 
+    # ----------------------------------------------------
     # Plans
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
         SELECT
@@ -2604,8 +3937,10 @@ def rebuild_database():
             DO UPDATE SET
                 daily_messages=excluded.daily_messages,
                 daily_images=excluded.daily_images,
-                daily_technical_questions=excluded.daily_technical_questions,
-                cooldown_seconds=excluded.cooldown_seconds
+                daily_technical_questions=
+                    excluded.daily_technical_questions,
+                cooldown_seconds=
+                    excluded.cooldown_seconds
             """,
             (
                 row[0],
@@ -2616,7 +3951,10 @@ def rebuild_database():
             ),
         )
 
-    # Plan prices
+    # ----------------------------------------------------
+    # Plan Prices
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
         SELECT
@@ -2654,56 +3992,145 @@ def rebuild_database():
                     1 if row[4] else 0,
                 ),
             )
+
         except sqlite3.IntegrityError:
             continue
 
+    # ----------------------------------------------------
     # Subscriptions
-    for row in original_db.execute(
+    # ----------------------------------------------------
+
+    old_subscription_columns = {
+        row[1]
+        for row in original_db.execute(
+            "PRAGMA table_info(subscriptions)"
+        ).fetchall()
+    }
+
+    if "expires_at" in old_subscription_columns:
+        subscription_query = """
+            SELECT
+                id,
+                user_id,
+                plan,
+                start_date,
+                duration_days,
+                expires_at,
+                status
+            FROM subscriptions
         """
-        SELECT
-            id,
-            user_id,
-            plan,
-            start_date,
-            duration_days,
-            status
-        FROM subscriptions
-        """
-    ):
-        if row[1] not in valid_user_ids:
-            continue
-
-        plan_exists = new_db.execute(
-            "SELECT 1 FROM plans WHERE name=?",
-            (row[2],),
-        ).fetchone()
-
-        if not plan_exists:
-            continue
-
-        new_db.execute(
-            """
-            INSERT OR IGNORE INTO subscriptions(
+    else:
+        subscription_query = """
+            SELECT
                 id,
                 user_id,
                 plan,
                 start_date,
                 duration_days,
                 status
-            )
-            VALUES(?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row[0],
-                row[1],
-                row[2] or "free",
-                row[3],
-                max(0, row[4] or 0),
-                row[5] or "inactive",
-            ),
-        )
+            FROM subscriptions
+        """
 
+    for row in original_db.execute(
+        subscription_query
+    ):
+        user_id = row[1]
+
+        if user_id not in valid_user_ids:
+            continue
+
+        plan = row[2] or "free"
+
+        plan_exists = new_db.execute(
+            "SELECT 1 FROM plans WHERE name=?",
+            (plan,),
+        ).fetchone()
+
+        if not plan_exists:
+            continue
+
+        if "expires_at" in old_subscription_columns:
+            expires_at = row[5] or ""
+
+            new_db.execute(
+                """
+                INSERT OR IGNORE INTO subscriptions(
+                    id,
+                    user_id,
+                    plan,
+                    start_date,
+                    duration_days,
+                    expires_at,
+                    status
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row[0],
+                    row[1],
+                    plan,
+                    row[3],
+                    max(0, row[4] or 0),
+                    expires_at,
+                    row[6]
+                    or "inactive",
+                ),
+            )
+
+        else:
+            start_date = row[3] or ""
+            duration_days = max(
+                0,
+                row[4] or 0,
+            )
+
+            expires_at = ""
+
+            if start_date and duration_days:
+                try:
+                    expires_at = (
+                        datetime.fromisoformat(
+                            str(start_date)
+                        )
+                        + timedelta(
+                            days=duration_days
+                        )
+                    ).isoformat()
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    expires_at = ""
+
+            new_db.execute(
+                """
+                INSERT OR IGNORE INTO subscriptions(
+                    id,
+                    user_id,
+                    plan,
+                    start_date,
+                    duration_days,
+                    expires_at,
+                    status
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row[0],
+                    row[1],
+                    plan,
+                    row[3],
+                    duration_days,
+                    expires_at,
+                    row[5]
+                    or "inactive",
+                ),
+            )
+
+    # ----------------------------------------------------
     # Usage
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
         SELECT
@@ -2744,17 +4171,27 @@ def rebuild_database():
             ),
         )
 
-    # Rate limit
-    if original_db.execute(
+    # ----------------------------------------------------
+    # Rate Limit
+    # ----------------------------------------------------
+
+    rate_limit_exists = original_db.execute(
         """
         SELECT COUNT(*)
         FROM sqlite_master
         WHERE type='table'
         AND name='rate_limit'
         """
-    ).fetchone()[0]:
+    ).fetchone()[0]
+
+    if rate_limit_exists:
         for row in original_db.execute(
-            "SELECT user_id, last_request FROM rate_limit"
+            """
+            SELECT
+                user_id,
+                last_request
+            FROM rate_limit
+            """
         ):
             if row[0] not in valid_user_ids:
                 continue
@@ -2773,7 +4210,10 @@ def rebuild_database():
                 ),
             )
 
+    # ----------------------------------------------------
     # Payments
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
         SELECT
@@ -2825,12 +4265,16 @@ def rebuild_database():
                 row[6] or "placeholder",
                 row[7] or "",
                 row[8] or "pending",
-                row[9] or datetime.now().isoformat(),
+                row[9]
+                or datetime.now().isoformat(),
             ),
         )
 
-    # Referral settings
-    referral_settings_table = original_db.execute(
+    # ----------------------------------------------------
+    # Referral Settings
+    # ----------------------------------------------------
+
+    referral_settings_exists = original_db.execute(
         """
         SELECT COUNT(*)
         FROM sqlite_master
@@ -2839,7 +4283,7 @@ def rebuild_database():
         """
     ).fetchone()[0]
 
-    if referral_settings_table:
+    if referral_settings_exists:
         row = original_db.execute(
             """
             SELECT
@@ -2866,9 +4310,12 @@ def rebuild_database():
                 VALUES(1, ?, ?, ?)
                 ON CONFLICT(id)
                 DO UPDATE SET
-                    required_invites=excluded.required_invites,
-                    reward_days=excluded.reward_days,
-                    reward_plan=excluded.reward_plan
+                    required_invites=
+                        excluded.required_invites,
+                    reward_days=
+                        excluded.reward_days,
+                    reward_plan=
+                        excluded.reward_plan
                 """,
                 (
                     max(1, row[0] or 3),
@@ -2877,24 +4324,109 @@ def rebuild_database():
                 ),
             )
 
+    # ----------------------------------------------------
+    # Referral Content
+    # ----------------------------------------------------
+
+    referral_content_exists = original_db.execute(
+        """
+        SELECT COUNT(*)
+        FROM sqlite_master
+        WHERE type='table'
+        AND name='referral_content'
+        """
+    ).fetchone()[0]
+
+    if referral_content_exists:
+        row = original_db.execute(
+            """
+            SELECT message_template
+            FROM referral_content
+            WHERE id=1
+            """
+        ).fetchone()
+
+        if row:
+            new_db.execute(
+                """
+                INSERT INTO referral_content(
+                    id,
+                    message_template
+                )
+                VALUES(1, ?)
+                ON CONFLICT(id)
+                DO UPDATE SET
+                    message_template=
+                        excluded.message_template
+                """,
+                (row[0] or "",),
+            )
+
+    # ----------------------------------------------------
     # Referrals
+    # ----------------------------------------------------
+
+    referral_columns = {
+        row[1]
+        for row in original_db.execute(
+            "PRAGMA table_info(referrals)"
+        ).fetchall()
+    }
+
+    if "reward_batch" in referral_columns:
+        referral_query = """
+            SELECT
+                id,
+                inviter_id,
+                invited_id,
+                reward_given,
+                reward_batch,
+                created_at
+            FROM referrals
+        """
+    else:
+        referral_query = """
+            SELECT
+                id,
+                inviter_id,
+                invited_id,
+                reward_given,
+                created_at
+            FROM referrals
+        """
+
     for row in original_db.execute(
-        """
-        SELECT
-            id,
-            inviter_id,
-            invited_id,
-            reward_given,
-            created_at
-        FROM referrals
-        """
+        referral_query
     ):
+        inviter_id = row[1]
+        invited_id = row[2]
+
         if (
-            row[1] not in valid_user_ids
-            or row[2] not in valid_user_ids
-            or row[1] == row[2]
+            inviter_id not in valid_user_ids
+            or invited_id not in valid_user_ids
+            or inviter_id == invited_id
         ):
             continue
+
+        if "reward_batch" in referral_columns:
+            reward_batch = max(
+                0,
+                row[4] or 0,
+            )
+            created_at = (
+                row[5]
+                or datetime.now().isoformat()
+            )
+        else:
+            reward_batch = (
+                1
+                if row[3]
+                else 0
+            )
+            created_at = (
+                row[4]
+                or datetime.now().isoformat()
+            )
 
         new_db.execute(
             """
@@ -2903,23 +4435,31 @@ def rebuild_database():
                 inviter_id,
                 invited_id,
                 reward_given,
+                reward_batch,
                 created_at
             )
-            VALUES(?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?)
             """,
             (
                 row[0],
-                row[1],
-                row[2],
+                inviter_id,
+                invited_id,
                 1 if row[3] else 0,
-                row[4] or datetime.now().isoformat(),
+                reward_batch,
+                created_at,
             ),
         )
 
+    # ----------------------------------------------------
     # Bans
+    # ----------------------------------------------------
+
     for row in original_db.execute(
         """
-        SELECT user_id, reason, banned_at
+        SELECT
+            user_id,
+            reason,
+            banned_at
         FROM banned_users
         """
     ):
@@ -2938,40 +4478,223 @@ def rebuild_database():
             (
                 row[0],
                 row[1] or "",
-                row[2] or datetime.now().isoformat(),
+                row[2]
+                or datetime.now().isoformat(),
             ),
         )
 
     new_db.commit()
-    fk_errors = new_db.execute("PRAGMA foreign_key_check").fetchall()
+
+    fk_errors = new_db.execute(
+        "PRAGMA foreign_key_check"
+    ).fetchall()
 
     if fk_errors:
         new_db.close()
         original_db.close()
-        os.remove(init_target)
+
+        if os.path.exists(init_target):
+            os.remove(init_target)
+
         raise RuntimeError(
-            f"Foreign key validation failed: {fk_errors}"
+            "Foreign key validation failed: "
+            f"{fk_errors}"
         )
 
-    new_db.execute("PRAGMA optimize")
+    new_db.execute(
+        "PRAGMA optimize"
+    )
+
     new_db.commit()
 
     original_db.close()
     new_db.close()
 
-    backup_path = DB_NAME + ".pre_rebuild_runtime"
+    backup_path = (
+        DB_NAME
+        + ".pre_rebuild_runtime"
+    )
 
     if os.path.exists(backup_path):
         os.remove(backup_path)
 
-    os.replace(DB_NAME, backup_path)
-    os.replace(init_target, DB_NAME)
+    os.replace(
+        DB_NAME,
+        backup_path,
+    )
+
+    os.replace(
+        init_target,
+        DB_NAME,
+    )
 
     return {
         "backup": backup_path,
         "users": users,
         "database": DB_NAME,
     }
+
+
+# ========================================================
+# Feature Flags
+# ========================================================
+
+def get_feature_flag(feature_name):
+    """
+    Get a single feature flag record by feature_name.
+    Returns dict or None if not found.
+    """
+    feature_name = str(feature_name or "").strip().lower()
+    if not feature_name:
+        return None
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                feature_name,
+                is_enabled,
+                category,
+                display_name,
+                disabled_message,
+                updated_at
+            FROM feature_flags
+            WHERE feature_name=?
+            """,
+            (feature_name,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            "feature_name": row[0],
+            "is_enabled": bool(row[1]),
+            "category": row[2] or "general",
+            "display_name": row[3] or "",
+            "disabled_message": row[4] or "",
+            "updated_at": str(row[5] or ""),
+        }
+    finally:
+        conn.close()
+
+
+def get_all_feature_flags():
+    """
+    Get all feature flags from the database as a dict keyed by feature_name.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                feature_name,
+                is_enabled,
+                category,
+                display_name,
+                disabled_message,
+                updated_at
+            FROM feature_flags
+            ORDER BY category, feature_name
+            """
+        )
+        rows = cursor.fetchall()
+        result = {}
+        for row in rows:
+            name = row[0]
+            result[name] = {
+                "feature_name": name,
+                "is_enabled": bool(row[1]),
+                "category": row[2] or "general",
+                "display_name": row[3] or "",
+                "disabled_message": row[4] or "",
+                "updated_at": str(row[5] or ""),
+            }
+        return result
+    finally:
+        conn.close()
+
+
+def set_feature_flag(
+    feature_name,
+    is_enabled,
+    disabled_message=None,
+    category=None,
+    display_name=None,
+):
+    """
+    Upsert a feature flag in the feature_flags table.
+    """
+    feature_name = str(feature_name or "").strip().lower()
+    if not feature_name:
+        return False
+
+    is_enabled_int = 1 if is_enabled else 0
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT category, display_name, disabled_message
+            FROM feature_flags
+            WHERE feature_name=?
+            """,
+            (feature_name,),
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            cat = category if category is not None else existing[0]
+            disp = display_name if display_name is not None else existing[1]
+            dis_msg = disabled_message if disabled_message is not None else existing[2]
+
+            cursor.execute(
+                """
+                UPDATE feature_flags
+                SET
+                    is_enabled=?,
+                    category=?,
+                    display_name=?,
+                    disabled_message=?,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE feature_name=?
+                """,
+                (is_enabled_int, cat or "general", disp or "", dis_msg or "", feature_name),
+            )
+        else:
+            cat = category or "general"
+            disp = display_name or ""
+            dis_msg = disabled_message or ""
+
+            cursor.execute(
+                """
+                INSERT INTO feature_flags(
+                    feature_name,
+                    is_enabled,
+                    category,
+                    display_name,
+                    disabled_message,
+                    updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (feature_name, is_enabled_int, cat, disp, dis_msg),
+            )
+
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 # ========================================================

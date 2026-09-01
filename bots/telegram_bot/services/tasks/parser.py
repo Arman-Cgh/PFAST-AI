@@ -14,40 +14,82 @@ from services.tasks.constants import (
 
 class TaskParser:
 
-    # ==========================
-    # Normalize
-    # ==========================
+    NUMBER_WORDS = {
+        "یک": 1,
+        "یه": 1,
+        "دو": 2,
+        "سه": 3,
+        "چهار": 4,
+        "پنج": 5,
+        "شش": 6,
+        "هفت": 7,
+        "هشت": 8,
+        "نه": 9,
+        "ده": 10,
+        "یازده": 11,
+        "دوازده": 12,
+        "سیزده": 13,
+        "چهارده": 14,
+        "پانزده": 15,
+        "شانزده": 16,
+        "هفده": 17,
+        "هجده": 18,
+        "نوزده": 19,
+        "بیست": 20,
+    }
 
     @staticmethod
-    def normalize_text(text: str) -> str:
+    def normalize_text(
+        text: str,
+    ) -> str:
 
         text = str(text or "")
 
-        text = text.replace("ي", "ی")
-        text = text.replace("ى", "ی")
-        text = text.replace("ك", "ک")
+        replacements = {
+            "ي": "ی",
+            "ى": "ی",
+            "ك": "ک",
+        }
+
+        for source, target in replacements.items():
+            text = text.replace(
+                source,
+                target,
+            )
 
         for source, target in PERSIAN_DIGITS.items():
-            text = text.replace(source, target)
+            text = text.replace(
+                source,
+                target,
+            )
 
-        text = re.sub(r"\s+", " ", text)
+        text = re.sub(
+            r"\s+",
+            " ",
+            text,
+        )
 
         return text.strip()
 
-    # ==========================
-    # Remove trigger
-    # ==========================
-
     @staticmethod
-    def remove_trigger(text: str) -> str:
+    def remove_trigger(
+        text: str,
+    ) -> str:
 
         result = text.strip()
 
-        for word in TASK_REMOVE_WORDS:
+        for word in sorted(
+            TASK_REMOVE_WORDS,
+            key=len,
+            reverse=True,
+        ):
 
-            pattern = rf"^{re.escape(word)}(?:\s+|$)"
+            pattern = (
+                rf"^{re.escape(word)}"
+                r"(?:\s+|$)"
+            )
 
-            result = re.sub(
+            cleaned = re.sub(
                 pattern,
                 "",
                 result,
@@ -55,97 +97,140 @@ class TaskParser:
                 flags=re.IGNORECASE,
             )
 
-        return result.strip()
+            if cleaned != result:
+                return cleaned.strip()
 
-    # ==========================
-    # Relative minutes
-    # ==========================
+        return result
 
-    @staticmethod
+    @classmethod
+    def _parse_relative(
+        cls,
+        text: str,
+        now: datetime,
+        unit: str,
+    ):
+
+        if unit == "minutes":
+            numeric_patterns = RELATIVE_MINUTE_PATTERNS
+            word = "دقیقه"
+            delta_factory = lambda value: timedelta(
+                minutes=value
+            )
+
+        else:
+            numeric_patterns = RELATIVE_HOUR_PATTERNS
+            word = "ساعت"
+            delta_factory = lambda value: timedelta(
+                hours=value
+            )
+
+        for pattern in numeric_patterns:
+
+            match = re.search(
+                pattern,
+                text,
+                flags=re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            value = int(
+                match.group(1)
+            )
+
+            target = now + delta_factory(
+                value
+            )
+
+            cleaned = re.sub(
+                pattern,
+                "",
+                text,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+            return (
+                target.strftime(
+                    "%Y-%m-%d"
+                ),
+                target.strftime(
+                    "%H:%M"
+                ),
+                cleaned,
+            )
+
+        for number_word, value in (
+            cls.NUMBER_WORDS.items()
+        ):
+
+            pattern = (
+                rf"(?<!\S)"
+                rf"{re.escape(number_word)}"
+                rf"\s+{word}\s+"
+                r"(?:دیگه|دیگر|بعد)"
+                r"(?!\S)"
+            )
+
+            match = re.search(
+                pattern,
+                text,
+                flags=re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            target = now + delta_factory(
+                value
+            )
+
+            cleaned = re.sub(
+                pattern,
+                "",
+                text,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+            return (
+                target.strftime(
+                    "%Y-%m-%d"
+                ),
+                target.strftime(
+                    "%H:%M"
+                ),
+                cleaned,
+            )
+
+        return "", "", text
+
+    @classmethod
     def parse_relative_minutes(
+        cls,
         text: str,
         now: datetime,
     ):
 
-        for pattern in RELATIVE_MINUTE_PATTERNS:
+        return cls._parse_relative(
+            text,
+            now,
+            "minutes",
+        )
 
-            match = re.search(
-                pattern,
-                text,
-                flags=re.IGNORECASE,
-            )
-
-            if not match:
-                continue
-
-            minutes = int(match.group(1))
-
-            target = now + timedelta(
-                minutes=minutes
-            )
-
-            cleaned = re.sub(
-                pattern,
-                "",
-                text,
-                count=1,
-                flags=re.IGNORECASE,
-            )
-
-            return (
-                target.strftime("%Y-%m-%d"),
-                target.strftime("%H:%M"),
-                cleaned,
-            )
-
-        return "", "", text
-
-    # ==========================
-    # Relative hours
-    # ==========================
-
-    @staticmethod
+    @classmethod
     def parse_relative_hours(
+        cls,
         text: str,
         now: datetime,
     ):
 
-        for pattern in RELATIVE_HOUR_PATTERNS:
-
-            match = re.search(
-                pattern,
-                text,
-                flags=re.IGNORECASE,
-            )
-
-            if not match:
-                continue
-
-            hours = int(match.group(1))
-
-            target = now + timedelta(
-                hours=hours
-            )
-
-            cleaned = re.sub(
-                pattern,
-                "",
-                text,
-                count=1,
-                flags=re.IGNORECASE,
-            )
-
-            return (
-                target.strftime("%Y-%m-%d"),
-                target.strftime("%H:%M"),
-                cleaned,
-            )
-
-        return "", "", text
-
-    # ==========================
-    # Date
-    # ==========================
+        return cls._parse_relative(
+            text,
+            now,
+            "hours",
+        )
 
     @staticmethod
     def parse_date(
@@ -153,31 +238,49 @@ class TaskParser:
         now: datetime,
     ):
 
-        for keyword, days in DATE_KEYWORDS.items():
+        for keyword, days in sorted(
+            DATE_KEYWORDS.items(),
+            key=lambda item: len(
+                item[0]
+            ),
+            reverse=True,
+        ):
 
-            if keyword not in text:
+            pattern = (
+                rf"(?<!\S)"
+                rf"{re.escape(keyword)}"
+                r"(?!\S)"
+            )
+
+            match = re.search(
+                pattern,
+                text,
+                flags=re.IGNORECASE,
+            )
+
+            if not match:
                 continue
 
             target = now + timedelta(
                 days=days
             )
 
-            cleaned = text.replace(
-                keyword,
+            cleaned = re.sub(
+                pattern,
                 "",
-                1,
+                text,
+                count=1,
+                flags=re.IGNORECASE,
             )
 
             return (
-                target.strftime("%Y-%m-%d"),
+                target.strftime(
+                    "%Y-%m-%d"
+                ),
                 cleaned,
             )
 
         return "", text
-
-    # ==========================
-    # Time
-    # ==========================
 
     @staticmethod
     def parse_time(
@@ -185,10 +288,6 @@ class TaskParser:
         now: datetime,
         existing_date: str,
     ):
-
-        # --------------------------
-        # HH:MM
-        # --------------------------
 
         match = re.search(
             r"(?:ساعت\s*)?(\d{1,2}):(\d{2})",
@@ -198,13 +297,17 @@ class TaskParser:
 
         if match:
 
-            hour = int(match.group(1))
-            minute = int(match.group(2))
+            hour = int(
+                match.group(1)
+            )
+
+            minute = int(
+                match.group(2)
+            )
 
             if not (
                 0 <= hour <= 23
-                and
-                0 <= minute <= 59
+                and 0 <= minute <= 59
             ):
 
                 return (
@@ -212,8 +315,6 @@ class TaskParser:
                     "",
                     text,
                 )
-
-            due_time = f"{hour:02d}:{minute:02d}"
 
             due_date = existing_date
 
@@ -226,29 +327,30 @@ class TaskParser:
                     microsecond=0,
                 )
 
-                if candidate < now:
-                    candidate += timedelta(days=1)
+                if candidate <= now:
+                    candidate += timedelta(
+                        days=1
+                    )
 
                 due_date = candidate.strftime(
                     "%Y-%m-%d"
                 )
 
             cleaned = re.sub(
-                re.escape(match.group(0)),
+                re.escape(
+                    match.group(0)
+                ),
                 "",
                 text,
                 count=1,
+                flags=re.IGNORECASE,
             )
 
             return (
                 due_date,
-                due_time,
+                f"{hour:02d}:{minute:02d}",
                 cleaned,
             )
-
-        # --------------------------
-        # ساعت HH
-        # --------------------------
 
         match = re.search(
             r"ساعت\s+(\d{1,2})(?!\d)",
@@ -256,62 +358,66 @@ class TaskParser:
             flags=re.IGNORECASE,
         )
 
-        if match:
-
-            hour = int(match.group(1))
-
-            if not 0 <= hour <= 23:
-                return (
-                    existing_date,
-                    "",
-                    text,
-                )
-
-            due_time = f"{hour:02d}:00"
-
-            due_date = existing_date
-
-            if not due_date:
-
-                candidate = now.replace(
-                    hour=hour,
-                    minute=0,
-                    second=0,
-                    microsecond=0,
-                )
-
-                if candidate < now:
-                    candidate += timedelta(days=1)
-
-                due_date = candidate.strftime(
-                    "%Y-%m-%d"
-                )
-
-            cleaned = re.sub(
-                re.escape(match.group(0)),
-                "",
-                text,
-                count=1,
-            )
+        if not match:
 
             return (
-                due_date,
-                due_time,
-                cleaned,
+                existing_date,
+                "",
+                text,
             )
 
-        return (
-            existing_date,
-            "",
-            text,
+        hour = int(
+            match.group(1)
         )
 
-    # ==========================
-    # Cleanup title
-    # ==========================
+        if not 0 <= hour <= 23:
+
+            return (
+                existing_date,
+                "",
+                text,
+            )
+
+        due_date = existing_date
+
+        if not due_date:
+
+            candidate = now.replace(
+                hour=hour,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
+            if candidate <= now:
+                candidate += timedelta(
+                    days=1
+                )
+
+            due_date = candidate.strftime(
+                "%Y-%m-%d"
+            )
+
+        cleaned = re.sub(
+            re.escape(
+                match.group(0)
+            ),
+            "",
+            text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+        return (
+            due_date,
+            f"{hour:02d}:00",
+            cleaned,
+        )
 
     @staticmethod
-    def cleanup_title(title: str) -> str:
+    def cleanup_title(
+        title: str,
+    ) -> str:
 
         title = re.sub(
             r"\s+",
@@ -319,15 +425,25 @@ class TaskParser:
             title,
         ).strip()
 
-        title = re.sub(
-            r"^(امروز|فردا|پس فردا)\s+",
-            "",
-            title,
-            flags=re.IGNORECASE,
-        )
+        for keyword in sorted(
+            DATE_KEYWORDS,
+            key=len,
+            reverse=True,
+        ):
+
+            title = re.sub(
+                (
+                    rf"(?<!\S)"
+                    rf"{re.escape(keyword)}"
+                    r"(?!\S)"
+                ),
+                "",
+                title,
+                flags=re.IGNORECASE,
+            )
 
         title = re.sub(
-            r"^(ساعت)\s*$",
+            r"(?<!\S)ساعت(?!\S)",
             "",
             title,
             flags=re.IGNORECASE,
@@ -340,10 +456,6 @@ class TaskParser:
         ).strip()
 
         return title or EMPTY_TITLE
-
-    # ==========================
-    # Parse
-    # ==========================
 
     @classmethod
     def parse(
@@ -366,47 +478,25 @@ class TaskParser:
         due_date = ""
         due_time = ""
 
-        # ==========================
-        # Relative minutes
-        # ==========================
-
         (
-            relative_date,
-            relative_time,
+            due_date,
+            due_time,
             title,
         ) = cls.parse_relative_minutes(
             title,
             now,
         )
 
-        if relative_date:
-
-            due_date = relative_date
-            due_time = relative_time
-
-        # ==========================
-        # Relative hours
-        # ==========================
-
         if not due_date:
 
             (
-                relative_date,
-                relative_time,
+                due_date,
+                due_time,
                 title,
             ) = cls.parse_relative_hours(
                 title,
                 now,
             )
-
-            if relative_date:
-
-                due_date = relative_date
-                due_time = relative_time
-
-        # ==========================
-        # Explicit date
-        # ==========================
 
         if not due_date:
 
@@ -414,10 +504,6 @@ class TaskParser:
                 title,
                 now,
             )
-
-        # ==========================
-        # Explicit time
-        # ==========================
 
         (
             due_date,
@@ -431,10 +517,6 @@ class TaskParser:
 
         if parsed_time:
             due_time = parsed_time
-
-        # ==========================
-        # Final title
-        # ==========================
 
         title = cls.cleanup_title(
             title

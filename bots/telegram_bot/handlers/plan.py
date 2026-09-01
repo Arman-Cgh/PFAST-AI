@@ -4,10 +4,9 @@ from telegram.ext import ContextTypes
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from database.plans import get_user_limits, get_user_plan
-from database.usage import get_usage
-from database.subscriptions import get_subscription
-
+from services.billing.plan_service import get_user_limits, get_user_plan
+from services.billing.usage_service import UsageService
+from services.billing.subscription_service import get_subscription
 
 # Human-friendly display names for plan keys
 DISPLAY_NAMES = {
@@ -28,7 +27,7 @@ def _human_key(key: str) -> str:
 def build_plan_text(user_id: int) -> str:
     plan_name = get_user_plan(user_id)
     limits = get_user_limits(user_id)
-    usage = get_usage(user_id)
+    usage = UsageService.get_user_usage(user_id)
     subscription = get_subscription(user_id)
 
     text = f"📦 طرح شما: {plan_name}\n\n"

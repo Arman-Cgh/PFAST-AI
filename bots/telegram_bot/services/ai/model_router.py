@@ -1,30 +1,62 @@
+from services.ai.config import (
+    GROQ_MODEL,
+    OPENROUTER_MODEL,
+    TABITOKEN_MODEL,
+)
+
+
 class ModelRouter:
 
-
     MODELS = {
-
-        "chat": "deepseek/deepseek-chat-v3.1",
-
-        "code": "deepseek/deepseek-coder",
-
-        "memory": "deepseek/deepseek-chat-v3.1",
-
-        "task": None,
-
-        "vision": "google/gemini-2.5-flash"
-
+        "groq": {
+            "chat": GROQ_MODEL,
+            "code": GROQ_MODEL,
+            "memory": GROQ_MODEL,
+            "task": None,
+            "vision": GROQ_MODEL,
+        },
+        "openrouter": {
+            "chat": OPENROUTER_MODEL,
+            "code": OPENROUTER_MODEL,
+            "memory": OPENROUTER_MODEL,
+            "task": None,
+            "vision": OPENROUTER_MODEL,
+        },
+        "tabitoken": {
+            "chat": TABITOKEN_MODEL,
+            "code": TABITOKEN_MODEL,
+            "memory": TABITOKEN_MODEL,
+            "task": None,
+            "vision": TABITOKEN_MODEL,
+        },
     }
-
-
 
     @classmethod
     def select(
         cls,
         provider_name,
-        intent
+        intent,
     ):
+        provider_name = (
+            str(provider_name or "groq")
+            .strip()
+            .lower()
+        )
 
-        return cls.MODELS.get(
+        intent = (
+            str(intent or "chat")
+            .strip()
+            .lower()
+        )
+
+        provider_models = cls.MODELS.get(
+            provider_name
+        )
+
+        if not provider_models:
+            provider_models = cls.MODELS["groq"]
+
+        return provider_models.get(
             intent,
-            cls.MODELS["chat"]
+            provider_models["chat"],
         )

@@ -23,89 +23,123 @@ class Personality:
             else {}
         )
 
-    def format_memory(self, memory):
+
+    def format_memory(
+        self,
+        memory
+    ):
 
         if isinstance(memory, dict):
 
-            lines = [
-                f"- {key}: {value}"
-                for key, value in memory.items()
-                if value is not None
-            ]
+            lines = []
+
+            for key, value in memory.items():
+
+                if value is not None:
+
+                    lines.append(
+                        f"- {key}: {value}"
+                    )
 
             return "\n".join(lines)
+
 
         return str(
             memory or ""
         )
 
+
     def build(self):
 
-        name = self.profile.get(
-            "first_name",
-            "",
+        name = self.extract_memory(
+            "name"
         )
 
         if not name:
 
-            name = self.extract_memory(
-                "name"
+            name = self.profile.get(
+                "first_name",
+                ""
             )
+
 
         job = self.extract_memory(
             "job"
         )
 
+
         interests = self.extract_memory(
             "interests"
         )
 
-        text = f"""
-╪┤╪«╪╡█î╪¬ AetherAI:
 
-┘å╪º┘à ┌⌐╪º╪▒╪¿╪▒:
-{name}
-
-
-╪┤╪║┘ä ┌⌐╪º╪▒╪¿╪▒:
-{job}
+        lines = [
+            "اطلاعات کاربر:"
+        ]
 
 
-╪╣┘ä╪º█î┘é ╪¿╪▒:
-{interests}
+        if name:
+
+            lines.append(
+                f"نام: {name}"
+            )
 
 
-┘é┘ê╪º┘å█î┘å ╪▒┘ü╪¬╪º╪▒:
+        if job:
 
-- ╪¬┘ê AetherAI ┘ç╪│╪¬█î╪î ╪»╪│╪¬█î╪º╪▒ ┘ç┘ê╪┤┘à┘å╪» ╪┤╪«╪╡█î ┌⌐╪º╪▒╪¿╪▒.
-- ╪»┘ê╪│╪¬╪º┘å┘ç ┘ê ╪╖╪¿█î╪╣█î ╪╡╪¡╪¿╪¬ ┌⌐┘å.
-- ╪º┌»╪▒ ┘å╪º┘à ┌⌐╪º╪▒╪¿╪▒ ╪▒╪º ┘à█îΓÇî╪»╪º┘å█î ┌»╪º┘ç█î ╪º╪│╪¬┘ü╪º╪»┘ç ┌⌐╪▒.
-- ╪º╪╖┘ä╪º╪╣╪º╪¬ ╪¡╪º┘ü╪╕╪º╪▒╪º ╪▒╪º ╪»╪▒ ┘╛╪º╪│╪«ΓÇî┘ç╪º ╪º╪│╪¬┘ü╪º╪»┘ç ┌⌐╪▒.
-- ╪«┘ê╪»╪¬ ╪▒╪º ┘à╪»┘ä ╪╣┘à┘ê┘à█î ┘ç┘ê╪┤ ┘à╪╡┘å┘ê╪╣█î ┘à╪╣╪▒╪▒┘ü█î ┘å┌⌐╪▒.
-- ┘╛╪º╪│╪«ΓÇî┘ç╪º ╪▒╪º ┘ê╪º╪╢╪¡ ┘ê ┌⌐╪º╪▒╪¿╪▒╪»█î ╪¿╪»┘ç.
-- ╪¿╪▒╪º█î ┘à╪│╪º╪ª┘ä ┘ü┘å█î ╪¬┘ê╪╢█î╪¡ ┘à╪▒╪¡┘ä┘çΓÇî╪º█î ╪¿╪»┘ç.
-- ╪¿╪▒╪º█î ╪│┘ê╪º┘äΓÇî┘ç╪º█î ╪│╪º╪»┘ç ┌⌐┘ê╪¬╪º┘ç ╪¼┘ê╪º╪¿ ╪¿╪»┘ç.
-"""
+            lines.append(
+                f"شغل: {job}"
+            )
 
-        return text.strip()
+
+        if interests:
+
+            lines.append(
+                f"علاقه‌مندی‌ها: {interests}"
+            )
+
+
+        return "\n".join(
+            lines
+        )
+
 
     def extract_memory(
         self,
         key,
     ):
 
+        key = str(
+            key
+        ).lower().strip()
+
+
         for line in self.memory.split("\n"):
 
-            if key in line:
+            clean = (
+                line
+                .replace("-", "")
+                .strip()
+            )
 
-                return (
-                    line
-                    .replace("-", "")
-                    .replace(
-                        key + ":",
-                        "",
-                    )
-                    .strip()
-                )
+
+            if ":" not in clean:
+                continue
+
+
+            current_key, value = clean.split(
+                ":",
+                1
+            )
+
+
+            if (
+                current_key.strip().lower()
+                ==
+                key
+            ):
+
+                return value.strip()
+
 
         return ""

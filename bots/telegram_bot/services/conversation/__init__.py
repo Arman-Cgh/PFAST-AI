@@ -1,3 +1,10 @@
+"""
+DEPRECATED MODULE: services.conversation
+
+This subsystem is maintained for historical/experimental reference only.
+The active production AI pipeline is located in `services.ai` (AIEngine, ResponsePipeline, etc.).
+"""
+
 from services.conversation.service import ConversationService
 from services.conversation.handler import ConversationHandler
 from services.conversation.manager import ConversationManager

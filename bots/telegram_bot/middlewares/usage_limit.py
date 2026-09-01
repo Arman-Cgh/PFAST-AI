@@ -1,23 +1,17 @@
-from database.plans import get_user_limits
-from database.usage import can_send_message
+from services.billing.plan_service import get_user_limits, get_user_plan
+from services.billing.usage_service import check_and_increment_usage
 
 
+def check_usage_limit(user_id):
+    limits = get_user_limits(user_id)
 
-def check_usage_limit(
-    user_id
-):
-
-    limits = get_user_limits(
-        user_id
+    daily_limit = limits.get(
+        "daily_messages",
+        0
     )
 
-
-    daily_limit = limits[
-        "daily_messages"
-    ]
-
-
-    return can_send_message(
+    return check_and_increment_usage(
         user_id,
+        "chat",
         daily_limit
     )

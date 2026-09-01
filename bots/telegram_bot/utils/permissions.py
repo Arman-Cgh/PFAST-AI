@@ -1,110 +1,421 @@
 import logging
-from database.plans import get_user_limits
-from database.usage import get_usage, add_usage, check_and_increment_usage
+
+from services.billing.plan_service import (
+    get_user_limits,
+    get_user_plan,
+)
+
+from services.billing.usage_service import (
+    get_usage,
+    add_usage,
+    check_and_increment_usage,
+)
+
 
 logger = logging.getLogger(__name__)
 
-# Map logical feature names to plan limit keys and usage keys
-# This mapping only maps names of keys; no numeric values are stored here.
+
 FEATURE_CONFIG = {
-    "chat": {"limit_key": "daily_messages", "usage_key": "messages"},
-    "image": {"limit_key": "daily_images", "usage_key": "images"},
-    "technical": {"limit_key": "daily_technical_questions", "usage_key": "code_requests"},
-    # vision falls back to image usage by default
-    "vision": {"limit_key": "daily_images", "usage_key": "searches"}
+    "chat": {
+        "limit_key": "daily_messages",
+        "usage_key": "messages",
+    },
+    "image": {
+        "limit_key": "daily_images",
+        "usage_key": "images",
+    },
+    "technical": {
+        "limit_key": "daily_technical_questions",
+        "usage_key": "code_requests",
+    },
+    "vision": {
+        "limit_key": "daily_images",
+        "usage_key": "searches",
+    },
 }
 
 
-def can_use_feature(user_id, feature_name):
-    """Return True if user can use the feature according to current plan limits.
+def _get_feature_config(
+    feature_name,
+):
+    feature = (
+        str(feature_name or "")
+        .strip()
+        .lower()
+    )
 
-    Behavior:
-    - All numeric limits are read from database.plans.get_user_limits(user_id).
-    - If the expected limit key is missing or invalid, a warning is logged and the feature is
-      treated as "unlimited" (allowed). This avoids silently blocking users when admin
-      hasn't configured a key yet.
-    """
-    cfg = FEATURE_CONFIG.get(feature_name)
-    if not cfg:
-        logger.warning("Feature mapping missing for '%s'", feature_name)
-        # No mapping => assume feature is allowed (fallback unlimited) but cannot increment usage safely
-        return True
+    return (
+        feature,
+        FEATURE_CONFIG.get(feature),
+    )
 
-    limits = get_user_limits(user_id)
-    usage = get_usage(user_id)
 
-    limit_key = cfg.get("limit_key")
-    usage_key = cfg.get("usage_key")
+def _get_user_limits(
+    user_id,
+):
+    limits = get_user_limits(
+        user_id
+    )
+
+    if not isinstance(
+        limits,
+        dict,
+    ):
+        raise ValueError(
+            "Invalid user limits payload"
+        )
+
+    return limits
+
+
+def _get_feature_limit(
+    user_id,
+    feature_name,
+):
+    feature, config = _get_feature_config(
+        feature_name
+    )
+
+    if config is None:
+        logger.warning(
+            "Unknown feature '%s' for user %s",
+            feature_name,
+            user_id,
+        )
+        return None
+
+    limits = _get_user_limits(
+        user_id
+    )
+
+    limit_key = config[
+        "limit_key"
+    ]
 
     if limit_key not in limits:
-        logger.warning("Plan limit key '%s' not found for user %s (plan limits: %s)", limit_key, user_id, list(limits.keys()))
-        return True
+        logger.error(
+            "Missing plan limit '%s' for user %s. "
+            "Available keys: %s",
+            limit_key,
+            user_id,
+            list(limits.keys()),
+        )
+        return None
 
-    limit_val = limits.get(limit_key)
-    used = usage.get(usage_key, 0)
+    value = limits.get(
+        limit_key
+    )
+
+    if value is None:
+        logger.error(
+            "Plan limit '%s' is None for user %s",
+            limit_key,
+            user_id,
+        )
+        return None
 
     try:
-        if limit_val is None:
-            logger.warning("Plan limit '%s' is None for user %s", limit_key, user_id)
-            return True
-        # attempt to coerce to int; if fails, log and allow (unlimited)
-        limit_int = int(limit_val)
-        return used < limit_int
-    except Exception as e:
-        logger.warning("Invalid plan limit value for key '%s' for user %s: %s (error: %s)", limit_key, user_id, limit_val, e)
-        return True
+        value = int(value)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        logger.error(
+            "Invalid plan limit '%s'=%r for user %s",
+            limit_key,
+            value,
+            user_id,
+        )
+        return None
+
+    if value < 0:
+        logger.error(
+            "Negative plan limit '%s'=%s for user %s",
+            limit_key,
+            value,
+            user_id,
+        )
+        return None
+
+    return value
 
 
-def increment_feature_usage(user_id, feature_name, amount=1):
-    """Increment stored usage for a feature. Returns True on success.
+def _get_cooldown_seconds(
+    user_id,
+):
+    limits = _get_user_limits(
+        user_id
+    )
 
-    This function performs storage only; permission checks should be done via can_use_feature
-    before calling increment_feature_usage if strict enforcement is desired.
+    value = limits.get(
+        "cooldown_seconds",
+        0,
+    )
+
+    try:
+        value = float(
+            value or 0
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        logger.error(
+            "Invalid cooldown_seconds=%r for user %s",
+            value,
+            user_id,
+        )
+        return 0.0
+
+    return max(
+        0.0,
+        value,
+    )
+
+
+def can_use_feature(
+    user_id,
+    feature_name,
+):
     """
-    if feature_name not in FEATURE_CONFIG:
-        logger.warning("Attempted to increment unknown feature '%s' for user %s", feature_name, user_id)
+    Read-only daily-limit check.
+
+    Cooldown is intentionally not consumed here.
+    Runtime request enforcement belongs to
+    check_and_consume_feature().
+    """
+
+    feature, config = _get_feature_config(
+        feature_name
+    )
+
+    if config is None:
+        return False
+
+    limit = _get_feature_limit(
+        user_id,
+        feature,
+    )
+
+    if limit is None:
         return False
 
     try:
-        add_usage(user_id, feature_name, amount)
-        return True
-    except Exception as e:
-        logger.exception("Failed to increment usage for feature '%s' for user %s: %s", feature_name, user_id, e)
+        usage = get_usage(
+            user_id
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to load usage for user %s",
+            user_id,
+        )
+        return False
+
+    usage_key = config[
+        "usage_key"
+    ]
+
+    try:
+        used = int(
+            usage.get(
+                usage_key,
+                0,
+            )
+            or 0
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        logger.error(
+            "Invalid usage '%s' for user %s",
+            usage_key,
+            user_id,
+        )
+        return False
+
+    if used < 0:
+        return False
+
+    return used < limit
+
+
+def increment_feature_usage(
+    user_id,
+    feature_name,
+    amount=1,
+):
+    """
+    Raw usage increment kept for backward compatibility.
+    Strict enforcement should use check_and_consume_feature().
+    """
+
+    feature, config = _get_feature_config(
+        feature_name
+    )
+
+    if config is None:
+        logger.warning(
+            "Unknown feature '%s' for user %s",
+            feature_name,
+            user_id,
+        )
+        return False
+
+    try:
+        amount = int(
+            amount
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return False
+
+    if amount <= 0:
+        return False
+
+    try:
+        return bool(
+            add_usage(
+                user_id,
+                feature,
+                amount,
+            )
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to increment usage "
+            "for feature '%s', user %s",
+            feature,
+            user_id,
+        )
         return False
 
 
-def check_and_consume_feature(user_id, feature_name, amount=1):
-    """Check plan limit and attempt to atomically consume usage.
-
-    Returns True if consumption succeeded (usage incremented), False otherwise.
+def check_and_consume_feature(
+    user_id,
+    feature_name,
+    amount=1,
+):
     """
-    cfg = FEATURE_CONFIG.get(feature_name)
-    if not cfg:
-        logger.warning("Feature mapping missing for '%s'", feature_name)
-        return True
+    Central permission gate for the active request path.
 
-    limits = get_user_limits(user_id)
-    limit_key = cfg.get("limit_key")
-    usage_key = cfg.get("usage_key")
+    Enforces:
+        1. known feature
+        2. daily plan limit
+        3. cooldown
+        4. atomic usage consumption
+    """
 
-    if limit_key not in limits:
-        logger.warning("Plan limit key '%s' not found for user %s (plan limits: %s)", limit_key, user_id, list(limits.keys()))
-        return True
+    feature, config = _get_feature_config(
+        feature_name
+    )
 
-    limit_val = limits.get(limit_key)
+    if config is None:
+        logger.warning(
+            "Unknown feature '%s' for user %s",
+            feature_name,
+            user_id,
+        )
+        return False
+
     try:
-        if limit_val is None:
-            logger.warning("Plan limit '%s' is None for user %s", limit_key, user_id)
-            return True
-        limit_int = int(limit_val)
-    except Exception as e:
-        logger.warning("Invalid plan limit value for key '%s' for user %s: %s (error: %s)", limit_key, user_id, limit_val, e)
-        return True
+        amount = int(
+            amount
+        )
 
-    # Delegate atomic check+increment to database layer
+    except (
+        TypeError,
+        ValueError,
+    ):
+        logger.warning(
+            "Invalid usage amount for "
+            "feature '%s', user %s: %r",
+            feature,
+            user_id,
+            amount,
+        )
+        return False
+
+    if amount <= 0:
+        logger.warning(
+            "Usage amount must be positive. "
+            "feature=%s user=%s amount=%s",
+            feature,
+            user_id,
+            amount,
+        )
+        return False
+
+    limit = _get_feature_limit(
+        user_id,
+        feature,
+    )
+
+    if limit is None:
+        return False
+
+    if amount > limit:
+        return False
+
+    cooldown_seconds = _get_cooldown_seconds(
+        user_id
+    )
+
     try:
-        return check_and_increment_usage(user_id, feature_name, limit_int, amount=amount)
-    except Exception as e:
-        logger.exception("Error while attempting check_and_consume_feature for %s user %s: %s", feature_name, user_id, e)
-        # fallback allow to avoid accidental blocking
-        return True
+        return bool(
+            check_and_increment_usage(
+                user_id=user_id,
+                feature=feature,
+                limit=limit,
+                amount=amount,
+                cooldown_seconds=cooldown_seconds,
+            )
+        )
+
+    except TypeError:
+        # Backward compatibility with an older usage
+        # implementation that does not yet accept
+        # cooldown_seconds.
+        try:
+            return bool(
+                check_and_increment_usage(
+                    user_id,
+                    feature,
+                    limit,
+                    amount,
+                )
+            )
+
+        except Exception:
+            logger.exception(
+                "Usage enforcement failed "
+                "for feature '%s', user %s",
+                feature,
+                user_id,
+            )
+            return False
+
+    except Exception:
+        logger.exception(
+            "Usage enforcement failed "
+            "for feature '%s', user %s",
+            feature,
+            user_id,
+        )
+        return False
+
+
+def get_current_user_plan(
+    user_id,
+):
+    return get_user_plan(
+        user_id
+    )

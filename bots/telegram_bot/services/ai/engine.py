@@ -20,22 +20,30 @@ class AIEngine:
         self,
         config=None,
     ):
-        self.config = config or ai_config
+        self.config = (
+            config
+            or ai_config
+        )
 
-        self.provider_manager = ProviderManager()
+        self.provider_manager = (
+            ProviderManager()
+        )
 
         self.cache = AICache()
 
-        self.response_pipeline = ResponsePipeline(
-            provider_manager=self.provider_manager,
-            cache=self.cache,
+        self.response_pipeline = (
+            ResponsePipeline(
+                provider_manager=(
+                    self.provider_manager
+                ),
+                cache=self.cache,
+            )
         )
 
         self._initialized = False
 
-    async def initialize(
-        self,
-    ):
+    async def initialize(self):
+
         if self._initialized:
             return
 
@@ -43,30 +51,41 @@ class AIEngine:
             self.provider_manager,
             "initialize",
         ):
+
             await self.provider_manager.initialize()
+
+        try:
+            await MemoryPipeline.start()
+        except Exception:
+            logger.exception("Failed to start MemoryPipeline worker")
 
         self._initialized = True
 
         logger.info(
-            "AI Engine initialized",
+            "AI Engine initialized"
         )
 
-    async def shutdown(
-        self,
-    ):
+    async def shutdown(self):
+
         if not self._initialized:
             return
+
+        try:
+            await MemoryPipeline.stop()
+        except Exception:
+            logger.exception("Failed to stop MemoryPipeline worker")
 
         if hasattr(
             self.provider_manager,
             "shutdown",
         ):
+
             await self.provider_manager.shutdown()
 
         self._initialized = False
 
         logger.info(
-            "AI Engine shutdown",
+            "AI Engine shutdown"
         )
 
     async def generate_response(
@@ -77,60 +96,102 @@ class AIEngine:
         use_cache: bool = True,
         extract_info: bool = True,
     ):
+
         if not self._initialized:
             await self.initialize()
+
+        message = str(
+            message or ""
+        ).strip()
+
+        if not message:
+
+            return {
+                "response": "",
+                "cached": False,
+                "intent": {
+                    "intent": "chat",
+                    "confidence": 0,
+                    "source": "empty",
+                },
+                "provider": "none",
+            }
 
         # ==========================================
         # Intent
         # ==========================================
 
         if intent is None:
-            intent_result = IntentRouter.detect(
-                message,
+
+            intent_result = (
+                IntentRouter.detect(
+                    message
+                )
             )
+
         else:
+
             intent_result = intent
 
         if hasattr(
             intent_result,
             "intent",
         ):
-            intent_name = intent_result.intent
+
+            intent_name = (
+                intent_result.intent
+            )
 
         elif isinstance(
             intent_result,
             dict,
         ):
-            intent_name = intent_result.get(
-                "intent",
-                "chat",
+
+            intent_name = (
+                intent_result.get(
+                    "intent",
+                    "chat",
+                )
             )
 
         else:
+
             intent_name = str(
-                intent_result or "chat"
+                intent_result
+                or "chat"
             )
+
+        intent_name = (
+            str(intent_name)
+            .strip()
+            .lower()
+        )
 
         # ==========================================
         # Task
         # ==========================================
 
         if intent_name == "task":
-            return TaskPipeline.execute(
+
+            result = TaskPipeline.execute(
                 user_id=user_id,
                 message=message,
                 intent=intent_result,
             )
 
+            return result
+
         # ==========================================
         # AI Response
         # ==========================================
 
-        result = await self.response_pipeline.generate(
-            user_id=user_id,
-            message=message,
-            intent=intent_name,
-            use_cache=use_cache,
+        result = await (
+            self.response_pipeline.generate(
+                user_id=user_id,
+                message=message,
+                intent=intent_name,
+                use_cache=use_cache,
+            )
         )
 
         # ==========================================
@@ -139,18 +200,30 @@ class AIEngine:
 
         if (
             extract_info
-            and not result["cached"]
+            and not result.get(
+                "cached",
+                False,
+            )
             and MemoryPipeline.should_extract(
                 intent=intent_name,
                 message=message,
             )
         ):
+
             MemoryPipeline.schedule(
-                provider_manager=self.provider_manager,
-                provider_name=result["provider"],
+                provider_manager=(
+                    self.provider_manager
+                ),
+                provider_name=result.get(
+                    "provider",
+                    "",
+                ),
                 user_id=user_id,
                 message=message,
-                response=result["response"],
+                response=result.get(
+                    "response",
+                    "",
+                ),
             )
 
         # ==========================================
@@ -161,6 +234,7 @@ class AIEngine:
             intent_result,
             "to_dict",
         ):
+
             result["intent"] = (
                 intent_result.to_dict()
             )
@@ -169,9 +243,13 @@ class AIEngine:
             intent_result,
             dict,
         ):
-            result["intent"] = intent_result
+
+            result["intent"] = (
+                intent_result
+            )
 
         else:
+
             result["intent"] = {
                 "intent": intent_name,
             }
@@ -187,9 +265,6 @@ class AIEngine:
     ):
         """
         Backward-compatible API.
-
-        Keeps older callers working while the main
-        public API remains generate_response().
         """
 
         return await self.generate_response(
