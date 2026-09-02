@@ -182,6 +182,29 @@ class AIEngine:
             return result
 
         # ==========================================
+        # Image Generation Feature Gate
+        # ==========================================
+
+        if intent_name in {"image", "image_generation"}:
+            from utils.feature_gate import check_feature_access
+            access = check_feature_access("image_generation")
+            if not access.get("allowed", False):
+                disabled_msg = (
+                    access.get("message")
+                    or "⚙️ سرویس تولید تصویر هوش مصنوعی موقتاً در دسترس نیست."
+                )
+                return {
+                    "response": disabled_msg,
+                    "cached": False,
+                    "intent": {
+                        "intent": "image_generation",
+                        "confidence": 1.0,
+                        "source": "feature_gate",
+                    },
+                    "provider": "none",
+                }
+
+        # ==========================================
         # AI Response
         # ==========================================
 

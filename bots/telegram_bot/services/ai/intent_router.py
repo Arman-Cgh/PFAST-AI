@@ -47,6 +47,25 @@ class IntentRouter:
     )
 
 
+    IMAGE_KEYWORDS = (
+        "عکس بساز",
+        "تصویر بساز",
+        "عکس تولید کن",
+        "تصویر تولید کن",
+        "یک عکس از",
+        "یک تصویر از",
+        "تولید عکس",
+        "تولید تصویر",
+        "ساخت عکس",
+        "ساخت تصویر",
+        "generate image",
+        "create image",
+        "draw a",
+        "draw an",
+        "/image",
+    )
+
+
     @staticmethod
     def detect(message: str):
 
@@ -77,6 +96,21 @@ class IntentRouter:
                 confidence=0.95,
                 source="task_router",
             )
+
+
+        # ==========================
+        # Image
+        # ==========================
+
+        for keyword in IntentRouter.IMAGE_KEYWORDS:
+
+            if keyword in text:
+
+                return IntentResult(
+                    intent="image_generation",
+                    confidence=0.9,
+                    source="keyword",
+                )
 
 
         # ==========================

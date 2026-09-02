@@ -24,6 +24,8 @@ from services.billing.payment_service import (
 from services.billing.gateway import (
     create_payment_link,
 )
+from utils.pricing import format_price
+from utils.feature_gate import check_feature_access
 
 from handlers.plan import build_plan_text
 from handlers.profile import build_profile_text
@@ -49,11 +51,11 @@ async def buy_command(
         if plan_name == "free":
             continue
 
-        text += (
-            f"• {plan_name.upper()}: "
-            f"{plan_data['price']} "
-            f"{plan_data['currency']}\n"
+        formatted_p = format_price(
+            plan_data["price"],
+            plan_data.get("currency", "تومان"),
         )
+        text += f"• {plan_name.upper()}: {formatted_p}\n"
 
     await update.message.reply_text(
         text,
@@ -324,6 +326,15 @@ async def user_callback(
     # ==========================
 
     if data == "feature:image":
+        access = check_feature_access("image_generation")
+        if not access.get("allowed", False):
+            disabled_msg = (
+                access.get("message")
+                or "⚙️ سرویس تولید تصویر هوش مصنوعی موقتاً در دسترس نیست."
+            )
+            await query.edit_message_text(disabled_msg)
+            return
+
         context.user_data["pending_action"] = "image"
 
         await query.edit_message_text(
@@ -380,11 +391,11 @@ async def user_callback(
             if plan_name == "free":
                 continue
 
-            text += (
-                f"• {plan_name.upper()}: "
-                f"{plan_data['price']} "
-                f"{plan_data['currency']}\n"
+            formatted_p = format_price(
+                plan_data["price"],
+                plan_data.get("currency", "تومان"),
             )
+            text += f"• {plan_name.upper()}: {formatted_p}\n"
 
         await query.edit_message_text(
             text,
@@ -414,7 +425,7 @@ async def user_callback(
             "ultra",
         }:
             await query.edit_message_text(
-                "❌ پلن انتخاب‌شده معتبر نیست."
+                "❌ پلن انتخاب‌ شده معتبر نیست."
             )
             return
 
@@ -644,16 +655,14 @@ def build_buy_keyboard(
             },
         )
 
+        formatted_p = format_price(
+            plan_data["price"],
+            plan_data.get("currency", "تومان"),
+        )
         buttons.append(
             InlineKeyboardButton(
-                (
-                    f"{plan_name.upper()} - "
-                    f"{plan_data['price']} "
-                    f"{plan_data['currency']}"
-                ),
-                callback_data=(
-                    f"buy:{plan_name}"
-                ),
+                f"{plan_name.upper()} - {formatted_p}",
+                callback_data=f"buy:{plan_name}",
             )
         )
 

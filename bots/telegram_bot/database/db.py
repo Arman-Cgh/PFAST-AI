@@ -1153,134 +1153,14 @@ def normalize_text(text):
     )
 
 
-def _parse_price_value(value):
-    if value is None:
-        return None
+from utils.pricing import (
+    parse_price_value,
+    format_price,
+    parse_price_input,
+)
 
-    if (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-    ):
-        return int(value)
-
-    text = str(value).strip()
-
-    if not text:
-        return None
-
-    text = text.translate(
-        str.maketrans(
-            "۰۱۲۳۴۵۶۷۸۹",
-            "0123456789",
-        )
-    )
-
-    text = (
-        text
-        .replace("٫", ".")
-        .replace("٬", "")
-        .replace("،", "")
-    )
-
-    text = re.sub(
-        r"(\d)/(\d)",
-        r"\1\2",
-        text,
-    )
-
-    text = re.sub(
-        r"[^\w\s.-]",
-        " ",
-        text,
-    )
-
-    tokens = [
-        token
-        for token in re.split(
-            r"\s+",
-            text,
-        )
-        if token
-    ]
-
-    if not tokens:
-        return None
-
-    number = None
-
-    units = {
-        "هزار": 1000,
-        "k": 1000,
-        "thousand": 1000,
-        "میلیون": 1_000_000,
-        "m": 1_000_000,
-        "million": 1_000_000,
-        "میلیارد": 1_000_000_000,
-        "b": 1_000_000_000,
-        "billion": 1_000_000_000,
-    }
-
-    currencies = {
-        "تومان",
-        "toman",
-        "t",
-        "rial",
-        "irr",
-        "ریال",
-    }
-
-    for token in tokens:
-        lower = token.lower()
-
-        if lower in currencies:
-            continue
-
-        if lower in units:
-            if number is not None:
-                number *= units[lower]
-            continue
-
-        match = re.fullmatch(
-            r"([0-9]+)([^0-9]+)?",
-            token,
-        )
-
-        if match:
-            parsed = int(
-                match.group(1)
-            )
-
-            suffix = (
-                match.group(2) or ""
-            ).lower()
-
-            if suffix in units:
-                parsed *= units[suffix]
-
-            if number is None:
-                number = parsed
-            else:
-                number = int(
-                    f"{number}{parsed}"
-                )
-
-            continue
-
-        try:
-            parsed = int(
-                float(token)
-            )
-        except ValueError:
-            continue
-
-        if number is None:
-            number = parsed
-        else:
-            number = int(
-                f"{number}{parsed}"
-            )
-
-    return number
+# Canonical alias for backward compatibility
+_parse_price_value = parse_price_value
 
 
 # ========================================================

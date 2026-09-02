@@ -20,6 +20,14 @@ CACHE_TTL_SECONDS = 60.0
 # { feature_name: { "data": dict_result, "cached_at": float_timestamp } }
 _FEATURE_CACHE: Dict[str, Dict[str, Any]] = {}
 
+# Canonical aliases for convenience and backward compatibility
+FEATURE_ALIASES: Dict[str, str] = {
+    "image": "image_generation",
+    "image_generator": "image_generation",
+    "password": "password_tools",
+    "url": "url_scanner",
+}
+
 
 def clear_feature_cache() -> None:
     """
@@ -49,6 +57,7 @@ def check_feature_access(feature_name: str) -> Dict[str, Any]:
     """
     raw_name = feature_name
     normalized_name = str(feature_name or "").strip().lower()
+    normalized_name = FEATURE_ALIASES.get(normalized_name, normalized_name)
 
     if not normalized_name or not validate_feature_exists(normalized_name):
         return {

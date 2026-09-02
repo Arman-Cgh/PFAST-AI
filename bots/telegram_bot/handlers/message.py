@@ -14,8 +14,12 @@ from database.db import (
     set_plan_price,
     set_referral_settings,
     set_referral_message_template,
-    _parse_price_value,
 )
+from utils.pricing import parse_price_input, format_price
+from utils.feature_gate import check_feature_access
+
+# Backward compatibility alias
+_parse_price_input = parse_price_input
 
 
 logger = logging.getLogger(__name__)
@@ -32,50 +36,6 @@ def clean_ai_response(text: str) -> str:
         .replace("`", "")
         .strip()
     )
-
-
-def _parse_price_input(text: str):
-    normalized = text.translate(
-        str.maketrans(
-            "۰۱۲۳۴۵۶۷۸۹",
-            "0123456789",
-        )
-    )
-
-    normalized = (
-        normalized
-        .replace("٬", "")
-        .replace("،", "")
-    )
-
-    normalized = re.sub(
-        r"(\d)/(\d)",
-        r"\1\2",
-        normalized,
-    )
-
-    amount = _parse_price_value(normalized)
-
-    if amount is None:
-        raise ValueError
-
-    lowered = normalized.lower()
-
-    currency = (
-        "تومان"
-        if any(
-            marker in lowered
-            for marker in (
-                "تومان",
-                "toman",
-                "t",
-                "💸",
-            )
-        )
-        else "IRR"
-    )
-
-    return amount, currency
 
 
 def _replace_referral_template_values(
@@ -125,7 +85,7 @@ async def _handle_admin_action(
         plan_name = action.split(":", 1)[1]
 
         try:
-            amount, currency = _parse_price_input(text)
+            amount, currency = parse_price_input(text)
 
             set_plan_price(
                 plan_name,
@@ -133,9 +93,11 @@ async def _handle_admin_action(
                 currency=currency,
             )
 
+            formatted_price = format_price(amount, currency)
+
             await update.message.reply_text(
                 f"✅ قیمت {plan_name.upper()} ذخیره شد: "
-                f"{amount:,} {currency}\n"
+                f"{formatted_price}\n"
                 "💸 مبلغ جدید در /buy نمایش داده می‌شود."
             )
 
@@ -235,6 +197,17 @@ async def _handle_admin_action(
         return True
 
     if action in {"image", "technical"}:
+        if action == "image":
+            access = check_feature_access("image_generation")
+            if not access.get("allowed", False):
+                clear_admin_action(user_id)
+                disabled_msg = (
+                    access.get("message")
+                    or "⚙️ سرویس تولید تصویر هوش مصنوعی موقتاً در دسترس نیست."
+                )
+                await update.message.reply_text(disabled_msg)
+                return True
+
         application = getattr(
             context,
             "application",
@@ -356,6 +329,18 @@ async def handle_message(
         from handlers.security.url import handle_url_scan_text
         await handle_url_scan_text(update, context, text)
         return
+
+    if pending_action == "image":
+        access = check_feature_access("image_generation")
+        if not access.get("allowed", False):
+            if isinstance(user_data, dict):
+                user_data.pop("pending_action", None)
+            disabled_msg = (
+                access.get("message")
+                or "⚙️ سرویس تولید تصویر هوش مصنوعی موقتاً در دسترس نیست."
+            )
+            await update.message.reply_text(disabled_msg)
+            return
 
     save_message(
         user_id,

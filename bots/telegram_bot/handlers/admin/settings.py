@@ -16,6 +16,7 @@ from database.db import (
 )
 from services.billing.plan_service import update_plan
 from config import ADMIN_ID, is_admin
+from utils.pricing import format_price, parse_price_input
 
 
 def _digits(text):
@@ -66,10 +67,11 @@ async def handle_settings_callback(update, context: ContextTypes.DEFAULT_TYPE, d
         prices = get_plan_prices()
         lines = ["💰 مدیریت قیمت‌ها", ""]
         for name in ("pro", "ultra"):
-            p = prices.get(name, {"price": 0, "currency": "IRR", "duration_days": 30, "is_active": True})
+            p = prices.get(name, {"price": 0, "currency": "تومان", "duration_days": 30, "is_active": True})
             state = "🟢 فعال" if p.get("is_active", True) else "🔴 غیرفعال"
+            formatted_p = format_price(p.get("price", 0), p.get("currency", "تومان"))
             lines.append(
-                f"• {name.upper()}: {int(p.get('price', 0)):,} {p.get('currency', 'IRR')}"
+                f"• {name.upper()}: {formatted_p}"
                 f" | {p.get('duration_days', 30)} روز | {state}"
             )
         await query.edit_message_text("\n".join(lines), reply_markup=_pricing_markup())
@@ -140,13 +142,15 @@ async def handle_admin_settings_message(update, context):
     if action.startswith("set_price:"):
         plan_name = action.split(":", 1)[1].lower()
         try:
-            amount = set_plan_price(plan_name, text, duration_days=30, currency="IRR")
+            amount, currency = parse_price_input(text)
+            set_plan_price(plan_name, amount, duration_days=30, currency=currency)
         except (ValueError, TypeError):
-            await message.reply_text("❌ مبلغ نامعتبر است. مثال: 350000 یا 350 هزار تومان")
+            await message.reply_text("❌ مبلغ نامعتبر است. مثال: 350000 یا 350/000 تومان")
             return True
         clear_admin_action(user.id)
+        formatted_p = format_price(amount, currency)
         await message.reply_text(
-            f"✅ قیمت {plan_name.upper()} ذخیره شد: {int(amount):,} IRR",
+            f"✅ قیمت {plan_name.upper()} ذخیره شد: {formatted_p}",
             reply_markup=_pricing_markup(),
         )
         return True
